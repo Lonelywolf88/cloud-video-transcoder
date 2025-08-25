@@ -1,0 +1,6 @@
+body { font-family:sans-serif; margin:24px; max-width:960px; }
+.hidden { display:none; }
+.container, section { margin-bottom:24px; }
+input, button { padding:8px; margin:4px; }
+.video-card { border:1px solid #ccc; padding:8px; border-radius:8px; margin-bottom:12px; }
+header { display:flex; justify-content:space-between; align-items:center; }
