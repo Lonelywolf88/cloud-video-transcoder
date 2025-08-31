@@ -78,6 +78,8 @@ export function mediaRoutes(db) {
     }
   });
 
+  // subtitles route removed
+
   // GET /api/v1/videos/:id/thumb
   router.get("/videos/:id/thumb", authRequired, async (req, res) => {
     try {

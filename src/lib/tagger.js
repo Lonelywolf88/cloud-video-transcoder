@@ -1,0 +1,33 @@
+// lib/tagger.js
+import fs from "fs/promises";
+
+const HF_TOKEN = process.env.HF_API_TOKEN;
+const MODEL = process.env.HF_IMAGE_MODEL || "microsoft/resnet-50";
+const TOP_K = Number(process.env.TAGS_TOP_K || 3); // fewer tags by default
+
+export async function classifyImageAtPath(imagePath) {
+  if (!HF_TOKEN) return [];
+  const bytes = await fs.readFile(imagePath);
+
+  const res = await fetch(
+    `https://api-inference.huggingface.co/models/${encodeURIComponent(MODEL)}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/octet-stream",
+        "Accept": "application/json",
+        "x-wait-for-model": "true",
+      },
+      body: bytes,
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`[tagger] HF error ${res.status}`);
+  }
+
+  const data = await res.json();
+  // return top 5 only
+  return (Array.isArray(data) ? data.slice(0, 5) : []).map(x => x.label);
+}

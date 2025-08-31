@@ -1,0 +1,57 @@
+# Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+logs/*.log
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# SQLite database files
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+*.db-journal
+*.sqlite-journal
+
+# Video files and renditions
+data/**/*.mp4
+data/**/*.jpg
+data/**/*.png
+data/**/*.webm
+
+# Thumbnails
+thumbnails/
+*.thumb.jpg
+*.thumb.png
+
+# Docker
+docker-compose.override.yml
+.docker
+*.tar
+
+# Build output
+dist/
+build/
+.cache/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -13,11 +13,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const app = express();
-app.use(cors());
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+app.use(cors({ origin: CORS_ORIGIN === "*" ? undefined : CORS_ORIGIN }));
 app.use(morgan("dev"));
 app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 8000;
+const HOST = process.env.HOST || "0.0.0.0"; // bind to all interfaces for Docker/EC2
 
 const bootstrap = async () => {
   const db = await getDb(process.env.DB_FILE || "./data/app.db");
@@ -44,12 +46,33 @@ const bootstrap = async () => {
   // start background worker
   startTranscodeWorker(db);
 
-  app.listen(PORT, () => {
-    console.log(`Auth API listening on http://localhost:${PORT}`);
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`Auth API listening on http://${HOST}:${PORT}`);
   });
+
+  // Graceful shutdown
+  const shutdown = async (sig) => {
+    try {
+      console.log(`\nReceived ${sig}, shutting down...`);
+      server.close(() => process.exit(0));
+      // Optionally close DB if needed: await db.close();
+      setTimeout(() => process.exit(0), 3000);
+    } catch {
+      process.exit(1);
+    }
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 };
 
 bootstrap().catch((e) => {
   console.error("Failed to start server", e);
   process.exit(1);
 });
+
+
+// docker run -d --name videotranscoder \
+//   -p 80:8000 \
+//   -v /srv/videotranscoder/data:/data \
+//   --env-file /srv/videotranscoder/.env \
+//   901444280953.dkr.ecr.ap-southeast-2.amazonaws.com/12138657-assignment1:v6
