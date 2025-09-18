@@ -3,55 +3,63 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { body, validationResult } from "express-validator";
 
-export function authRoutes(db) {
+const DEFAULT_USERNAME = process.env.DEMO_USERNAME || "yiteng";
+const DEFAULT_PASSWORD = process.env.DEMO_PASSWORD || "yiteng";
+
+const demoUser = {
+  id: process.env.DEMO_USER_ID || "demo-user",
+  username: DEFAULT_USERNAME,
+  password: DEFAULT_PASSWORD,
+  role: process.env.DEMO_USER_ROLE || "user"
+};
+
+async function verifyPassword(plain, expected) {
+  if (!expected) return false;
+
+  if (expected.startsWith("$2")) {
+    try {
+      return await bcrypt.compare(plain, expected);
+    } catch {
+      return false;
+    }
+  }
+
+  return plain === expected;
+}
+
+export function authRoutes() {
   const router = Router();
 
-  // POST /api/v1/auth/register (for local testing)
-  router.post(
-    "/register",
-    body("username").isString().trim().isLength({ min: 3 }),
-    body("password").isString().isLength({ min: 6 }),
-    async (req, res) => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  router.post("/register", (_req, res) => {
+    return res.status(503).json({
+      error: "Registration is temporarily disabled for this deployment."
+    });
+  });
 
-      const { username, password } = req.body;
-      const hash = await bcrypt.hash(password, 12);
-
-      try {
-        await db.run(
-          `INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'user')`,
-          [username, hash]
-        );
-        return res.status(201).json({ message: "User created" });
-      } catch (e) {
-        if (String(e).includes("UNIQUE")) {
-          return res.status(409).json({ error: "Username already exists" });
-        }
-        console.error(e);
-        return res.status(500).json({ error: "Internal error" });
-      }
-    }
-  );
-
-  // POST /api/v1/auth/login
   router.post(
     "/login",
     body("username").isString().trim(),
     body("password").isString(),
     async (req, res) => {
       const errors = validationResult(req);
-      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
 
-      const { username, password } = req.body;
-      const user = await db.get(`SELECT id, username, password_hash, role FROM users WHERE username = ?`, [username]);
-      if (!user) return res.status(401).json({ error: "Invalid credentials" });
+      const username = req.body.username.trim();
+      const password = req.body.password;
 
-      const ok = await bcrypt.compare(password, user.password_hash);
-      if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+      if (username !== demoUser.username) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      const ok = await verifyPassword(password, demoUser.password);
+      if (!ok) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
 
       const token = jwt.sign(
-        { id: user.id, username: user.username, role: user.role },
+        { id: demoUser.id, username: demoUser.username, role: demoUser.role },
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES || "1h" }
       );
