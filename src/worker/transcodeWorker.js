@@ -16,9 +16,14 @@ import {
 } from "../lib/paths.js";
 import { transcodeProfiles, extractThumbnail, ffprobeDurationSeconds } from "../lib/ffmpeg.js";
 import { classifyImageAtPath } from "../lib/tagger.js";
-import { enqueue } from "./queue.js";
+
+const WORKER_ID = `${os.hostname()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+const POLL_INTERVAL_MS = Number(process.env.TRANSCODE_POLL_MS || 5000);
+const LOCK_TTL_MS = Number(process.env.TRANSCODE_LOCK_TTL_MS || 5 * 60 * 1000);
 
 let current = null; // { userId, videoId, abortController }
+let running = false;
+let scheduled = false;
 
 async function downloadOriginal(video, destination) {
   const data = await s3Client.send(
@@ -44,30 +49,17 @@ async function uploadFileToS3(localPath, key, contentType) {
   return stat.size;
 }
 
-async function processVideo(userId, videoId) {
+async function processVideo(video) {
+  const { userId, videoId } = video;
   const abortController = new AbortController();
   let tmpDir;
 
   try {
-    const video = await videoRepo.get(userId, videoId);
-    if (!video) {
-      return;
-    }
-
-    if (video.status !== "queued") {
-      return;
-    }
-
     current = { userId, videoId, abortController };
-
-    const claimed = await videoRepo.markProcessing(userId, videoId).catch(() => null);
-    if (!claimed) {
-      return;
-    }
 
     tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "cab432-"));
     const originalPath = path.join(tmpDir, "original.mp4");
-    await downloadOriginal(claimed, originalPath);
+    await downloadOriginal(video, originalPath);
 
     const duration = await ffprobeDurationSeconds(originalPath);
 
@@ -114,7 +106,7 @@ async function processVideo(userId, videoId) {
     });
   } catch (err) {
     const message = err?.name === "AbortError" ? "Canceled by user" : err?.message || "Transcode failed";
-    console.error("Transcode failed", userId, videoId, err);
+    console.error("[worker] transcode failed", userId, videoId, err);
     await videoRepo.markFailed(userId, videoId, message).catch(() => {});
   } finally {
     current = null;
@@ -124,8 +116,64 @@ async function processVideo(userId, videoId) {
   }
 }
 
-export function enqueueTranscode({ userId, videoId }) {
-  enqueue(() => processVideo(userId, videoId));
+async function reclaimStaleJobs() {
+  const cutoffIso = new Date(Date.now() - LOCK_TTL_MS).toISOString();
+  const stale = await videoRepo.findStaleProcessing(cutoffIso, 10);
+  for (const job of stale) {
+    const reset = await videoRepo.requeueVideo(job.userId, job.videoId);
+    if (reset) {
+      console.warn(`[worker] Re-queued stale job ${job.videoId}`);
+    }
+  }
+}
+
+async function workCycle() {
+  if (running) {
+    scheduled = true;
+    return;
+  }
+  running = true;
+  try {
+    let processed;
+    do {
+      processed = false;
+      await reclaimStaleJobs();
+      const claimed = await videoRepo.claimNextQueuedVideo(WORKER_ID, 5);
+      if (claimed) {
+        processed = true;
+        await processVideo(claimed);
+      }
+    } while (processed);
+  } catch (err) {
+    console.error("[worker] cycle error", err);
+  } finally {
+    running = false;
+    if (scheduled) {
+      scheduled = false;
+      queueMicrotask(workCycle);
+    }
+  }
+}
+
+let pollTimer = null;
+
+function schedulePolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+  }
+  pollTimer = setInterval(() => {
+    workCycle();
+  }, POLL_INTERVAL_MS);
+}
+
+export function startTranscodeWorker() {
+  console.log(`[worker] ${WORKER_ID} starting`);
+  schedulePolling();
+  workCycle();
+}
+
+export function notifyTranscodeWorker() {
+  queueMicrotask(workCycle);
 }
 
 export function getCurrentTranscodeId() {
@@ -138,8 +186,4 @@ export function cancelCurrentTranscode() {
     return true;
   }
   return false;
-}
-
-export function startTranscodeWorker() {
-  console.log("[worker] transcode queue ready");
 }

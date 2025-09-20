@@ -42,6 +42,8 @@ const USER_PREFIX = "USER#";
 const VIDEO_SEGMENT = "#VIDEO#";
 const USERPROFILE_PREFIX = "USERPROFILE#";
 const TYPE_VIDEO = "Video";
+const LOCKED_BY_ATTR = "transcodeLockedBy";
+const LOCKED_AT_ATTR = "transcodeLockedAt";
 
 const videoSk = (userId, videoId) => `${USER_PREFIX}${userId}${VIDEO_SEGMENT}${videoId}`;
 const videoPrefixForUser = (userId) => `${USER_PREFIX}${userId}${VIDEO_SEGMENT}`;
@@ -83,7 +85,9 @@ function sanitizeVideo(item) {
     sourceType: item.sourceType,
     sourceUrl: item.sourceUrl,
     createdAt: item.createdAt,
-    updatedAt: item.updatedAt
+    updatedAt: item.updatedAt,
+    transcodeLockedBy: item[LOCKED_BY_ATTR] || null,
+    transcodeLockedAt: item[LOCKED_AT_ATTR] || null
   };
 }
 
@@ -153,7 +157,7 @@ export const videoRepo = {
     return Items.map(sanitizeVideo).filter(Boolean).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
   },
 
-  async markProcessing(userId, videoId) {
+  async markProcessing(userId, videoId, workerId) {
     const now = new Date().toISOString();
     const command = new UpdateCommand({
       TableName: DDB_TABLE,
@@ -161,23 +165,156 @@ export const videoRepo = {
         [PARTITION_KEY_ATTR]: QUT_USERNAME,
         [SORT_KEY_ATTR]: videoSk(userId, videoId)
       },
-      UpdateExpression: "SET #status = :processing, #updatedAt = :updatedAt REMOVE #errorMessage",
-      ConditionExpression: "#status = :queued",
+      UpdateExpression:
+        'SET #status = :processing, #updatedAt = :updatedAt, #lockedBy = :lockedBy, #lockedAt = :lockedAt REMOVE #errorMessage',
+      ConditionExpression:
+        '#status = :queued AND attribute_not_exists(#lockedBy)',
       ExpressionAttributeNames: {
-        "#status": "status",
-        "#updatedAt": "updatedAt",
-        "#errorMessage": "errorMessage"
+        '#status': 'status',
+        '#updatedAt': 'updatedAt',
+        '#errorMessage': 'errorMessage',
+        '#lockedBy': LOCKED_BY_ATTR,
+        '#lockedAt': LOCKED_AT_ATTR
       },
       ExpressionAttributeValues: {
-        ":processing": "processing",
-        ":updatedAt": now,
-        ":queued": "queued"
+        ':processing': 'processing',
+        ':updatedAt': now,
+        ':queued': 'queued',
+        ':lockedBy': workerId,
+        ':lockedAt': now
       },
-      ReturnValues: "ALL_NEW"
+      ReturnValues: 'ALL_NEW'
     });
 
     const { Attributes } = await ddbDocClient.send(command);
     return sanitizeVideo(Attributes);
+  },
+
+  async findQueuedVideos(limit = 10) {
+    const items = [];
+    let ExclusiveStartKey;
+
+    while (items.length < limit) {
+      const command = new QueryCommand({
+        TableName: DDB_TABLE,
+        KeyConditionExpression: '#pk = :pk AND begins_with(#sk, :prefix)',
+        ExpressionAttributeNames: {
+          '#pk': PARTITION_KEY_ATTR,
+          '#sk': SORT_KEY_ATTR,
+          '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+          ':pk': QUT_USERNAME,
+          ':prefix': USER_PREFIX,
+          ':queued': 'queued'
+        },
+        FilterExpression: '#status = :queued',
+        Limit: Math.max(limit, 10),
+        ExclusiveStartKey
+      });
+
+      const { Items = [], LastEvaluatedKey } = await ddbDocClient.send(command);
+      for (const raw of Items) {
+        if (items.length >= limit) break;
+        items.push(sanitizeVideo(raw));
+      }
+      if (!LastEvaluatedKey) {
+        break;
+      }
+      ExclusiveStartKey = LastEvaluatedKey;
+    }
+
+    return items;
+  },
+
+  async claimNextQueuedVideo(workerId, limit = 5) {
+    const queued = await this.findQueuedVideos(limit);
+    for (const video of queued) {
+      try {
+        return await this.markProcessing(video.userId, video.videoId, workerId);
+      } catch (err) {
+        if (err?.name === 'ConditionalCheckFailedException') {
+          continue;
+        }
+        throw err;
+      }
+    }
+    return null;
+  },
+
+  async findStaleProcessing(cutoffIso, limit = 10) {
+    const items = [];
+    let ExclusiveStartKey;
+
+    while (items.length < limit) {
+      const command = new QueryCommand({
+        TableName: DDB_TABLE,
+        KeyConditionExpression: '#pk = :pk AND begins_with(#sk, :prefix)',
+        ExpressionAttributeNames: {
+          '#pk': PARTITION_KEY_ATTR,
+          '#sk': SORT_KEY_ATTR,
+          '#status': 'status',
+          '#lockedAt': LOCKED_AT_ATTR
+        },
+        ExpressionAttributeValues: {
+          ':pk': QUT_USERNAME,
+          ':prefix': USER_PREFIX,
+          ':processing': 'processing',
+          ':cutoff': cutoffIso
+        },
+        FilterExpression: '#status = :processing AND attribute_exists(#lockedAt) AND #lockedAt <= :cutoff',
+        Limit: Math.max(limit, 10),
+        ExclusiveStartKey
+      });
+
+      const { Items = [], LastEvaluatedKey } = await ddbDocClient.send(command);
+      for (const raw of Items) {
+        if (items.length >= limit) break;
+        items.push(sanitizeVideo(raw));
+      }
+      if (!LastEvaluatedKey) {
+        break;
+      }
+      ExclusiveStartKey = LastEvaluatedKey;
+    }
+
+    return items;
+  },
+
+  async requeueVideo(userId, videoId) {
+    const now = new Date().toISOString();
+    const command = new UpdateCommand({
+      TableName: DDB_TABLE,
+      Key: {
+        [PARTITION_KEY_ATTR]: QUT_USERNAME,
+        [SORT_KEY_ATTR]: videoSk(userId, videoId)
+      },
+      UpdateExpression: 'SET #status = :queued, #updatedAt = :updatedAt REMOVE #lockedBy, #lockedAt, #errorMessage',
+      ConditionExpression: '#status = :processing',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+        '#updatedAt': 'updatedAt',
+        '#lockedBy': LOCKED_BY_ATTR,
+        '#lockedAt': LOCKED_AT_ATTR,
+        '#errorMessage': 'errorMessage'
+      },
+      ExpressionAttributeValues: {
+        ':queued': 'queued',
+        ':processing': 'processing',
+        ':updatedAt': now
+      },
+      ReturnValues: 'ALL_NEW'
+    });
+
+    try {
+      const { Attributes } = await ddbDocClient.send(command);
+      return sanitizeVideo(Attributes);
+    } catch (err) {
+      if (err?.name === 'ConditionalCheckFailedException') {
+        return null;
+      }
+      throw err;
+    }
   },
 
   async markCompleted(userId, videoId, { duration, thumbnailKey, renditions, tags }) {
@@ -188,25 +325,28 @@ export const videoRepo = {
         [PARTITION_KEY_ATTR]: QUT_USERNAME,
         [SORT_KEY_ATTR]: videoSk(userId, videoId)
       },
-      UpdateExpression: "SET #status = :completed, #updatedAt = :updatedAt, #duration = :duration, #thumbnailKey = :thumbnailKey, #renditions = :renditions, #tags = :tags REMOVE #errorMessage",
+      UpdateExpression:
+        'SET #status = :completed, #updatedAt = :updatedAt, #duration = :duration, #thumbnailKey = :thumbnailKey, #renditions = :renditions, #tags = :tags REMOVE #errorMessage, #lockedBy, #lockedAt',
       ExpressionAttributeNames: {
-        "#status": "status",
-        "#updatedAt": "updatedAt",
-        "#duration": "duration",
-        "#thumbnailKey": "thumbnailKey",
-        "#renditions": "renditions",
-        "#tags": "tags",
-        "#errorMessage": "errorMessage"
+        '#status': 'status',
+        '#updatedAt': 'updatedAt',
+        '#duration': 'duration',
+        '#thumbnailKey': 'thumbnailKey',
+        '#renditions': 'renditions',
+        '#tags': 'tags',
+        '#errorMessage': 'errorMessage',
+        '#lockedBy': LOCKED_BY_ATTR,
+        '#lockedAt': LOCKED_AT_ATTR
       },
       ExpressionAttributeValues: {
-        ":completed": "completed",
-        ":updatedAt": now,
-        ":duration": duration ?? null,
-        ":thumbnailKey": thumbnailKey ?? null,
-        ":renditions": renditions ?? [],
-        ":tags": tags ?? []
+        ':completed': 'completed',
+        ':updatedAt': now,
+        ':duration': duration ?? null,
+        ':thumbnailKey': thumbnailKey ?? null,
+        ':renditions': renditions ?? [],
+        ':tags': tags ?? []
       },
-      ReturnValues: "ALL_NEW"
+      ReturnValues: 'ALL_NEW'
     });
 
     const { Attributes } = await ddbDocClient.send(command);
@@ -221,18 +361,21 @@ export const videoRepo = {
         [PARTITION_KEY_ATTR]: QUT_USERNAME,
         [SORT_KEY_ATTR]: videoSk(userId, videoId)
       },
-      UpdateExpression: "SET #status = :failed, #updatedAt = :updatedAt, #errorMessage = :message",
+      UpdateExpression:
+        'SET #status = :failed, #updatedAt = :updatedAt, #errorMessage = :message REMOVE #lockedBy, #lockedAt',
       ExpressionAttributeNames: {
-        "#status": "status",
-        "#updatedAt": "updatedAt",
-        "#errorMessage": "errorMessage"
+        '#status': 'status',
+        '#updatedAt': 'updatedAt',
+        '#errorMessage': 'errorMessage',
+        '#lockedBy': LOCKED_BY_ATTR,
+        '#lockedAt': LOCKED_AT_ATTR
       },
       ExpressionAttributeValues: {
-        ":failed": "failed",
-        ":updatedAt": now,
-        ":message": message
+        ':failed': 'failed',
+        ':updatedAt': now,
+        ':message': message
       },
-      ReturnValues: "ALL_NEW"
+      ReturnValues: 'ALL_NEW'
     });
 
     const { Attributes } = await ddbDocClient.send(command);

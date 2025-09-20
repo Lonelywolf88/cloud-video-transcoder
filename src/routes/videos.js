@@ -11,7 +11,7 @@ import {
   buildOriginalKey
 } from "../lib/paths.js";
 import {
-  enqueueTranscode,
+  notifyTranscodeWorker,
   getCurrentTranscodeId,
   cancelCurrentTranscode
 } from "../worker/transcodeWorker.js";
@@ -98,7 +98,7 @@ export function videoRoutes() {
           duration
         });
 
-        enqueueTranscode({ userId, videoId });
+        notifyTranscodeWorker();
 
         return res.status(201).json({
           video: buildVideoResponse(created)
@@ -227,6 +227,13 @@ export function videoRoutes() {
       const video = await videoRepo.get(userId, videoId);
       if (!video) {
         return res.status(404).json({ error: "Not found" });
+      }
+
+      if (video.status === "processing") {
+        if (getCurrentTranscodeId() === videoId) {
+          cancelCurrentTranscode();
+        }
+        await videoRepo.markFailed(userId, videoId, "deleted by user");
       }
 
       const objects = [];
