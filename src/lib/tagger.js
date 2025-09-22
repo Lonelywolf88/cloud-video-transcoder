@@ -1,9 +1,9 @@
-// lib/tagger.js
 import fs from "fs/promises";
 
 const HF_TOKEN = process.env.HF_API_TOKEN;
 const MODEL = process.env.HF_IMAGE_MODEL || "microsoft/resnet-50";
-const TOP_K = Number(process.env.TAGS_TOP_K || 3); // fewer tags by default
+const TOP_K = Number(process.env.TAGS_TOP_K || 5);
+const MIN_SCORE = Number(process.env.TAGS_MIN_SCORE || 0);
 
 export async function classifyImageAtPath(imagePath) {
   if (!HF_TOKEN) return [];
@@ -17,9 +17,9 @@ export async function classifyImageAtPath(imagePath) {
         Authorization: `Bearer ${HF_TOKEN}`,
         "Content-Type": "application/octet-stream",
         "Accept": "application/json",
-        "x-wait-for-model": "true",
+        "x-wait-for-model": "true"
       },
-      body: bytes,
+      body: bytes
     }
   );
 
@@ -28,6 +28,13 @@ export async function classifyImageAtPath(imagePath) {
   }
 
   const data = await res.json();
-  // return top 5 only
-  return (Array.isArray(data) ? data.slice(0, 5) : []).map(x => x.label);
+  if (!Array.isArray(data)) return [];
+
+  return data
+    .slice(0, TOP_K)
+    .map((entry) => ({
+      tag: entry?.label,
+      score: typeof entry?.score === "number" ? entry.score : undefined
+    }))
+    .filter((entry) => entry.tag && (entry.score === undefined || entry.score >= MIN_SCORE));
 }

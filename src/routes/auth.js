@@ -1,64 +1,104 @@
 import { Router } from "express";
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
-import { body, validationResult } from "express-validator";
+import crypto from "crypto";
+import {
+  CognitoIdentityProviderClient,
+  SignUpCommand,
+  ConfirmSignUpCommand,
+  InitiateAuthCommand,
+  AuthFlowType,
+} from "@aws-sdk/client-cognito-identity-provider";
 
-export function authRoutes(db) {
+const client = new CognitoIdentityProviderClient({
+  region: process.env.COGNITO_REGION,
+});
+
+// Helper: build secret hash if client has a secret
+function secretHash(username) {
+  if (!process.env.COGNITO_CLIENT_SECRET) return undefined;
+  const hasher = crypto.createHmac("sha256", process.env.COGNITO_CLIENT_SECRET);
+  hasher.update(`${username}${process.env.COGNITO_CLIENT_ID}`);
+  return hasher.digest("base64");
+}
+
+export function authRoutes() {
   const router = Router();
 
-  // POST /api/v1/auth/register (for local testing)
-  router.post(
-    "/register",
-    body("username").isString().trim().isLength({ min: 3 }),
-    body("password").isString().isLength({ min: 6 }),
-    async (req, res) => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-
-      const { username, password } = req.body;
-      const hash = await bcrypt.hash(password, 12);
-
-      try {
-        await db.run(
-          `INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'user')`,
-          [username, hash]
-        );
-        return res.status(201).json({ message: "User created" });
-      } catch (e) {
-        if (String(e).includes("UNIQUE")) {
-          return res.status(409).json({ error: "Username already exists" });
-        }
-        console.error(e);
-        return res.status(500).json({ error: "Internal error" });
-      }
+  // Register user
+  router.post("/register", async (req, res) => {
+    const { username, password, email } = req.body;
+    if (!username || !password || !email) {
+      return res.status(400).json({ error: "username, password, email required" });
     }
-  );
 
-  // POST /api/v1/auth/login
-  router.post(
-    "/login",
-    body("username").isString().trim(),
-    body("password").isString(),
-    async (req, res) => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    try {
+      await client.send(
+        new SignUpCommand({
+          ClientId: process.env.COGNITO_CLIENT_ID,
+          Username: username,
+          Password: password,
+          SecretHash: secretHash(username),
+          UserAttributes: [{ Name: "email", Value: email }],
+        })
+      );
+      res.json({ message: "Check email for confirmation code" });
+    } catch (err) {
+      console.error("Cognito signup failed:", err);
+      res.status(400).json({ error: err.message || "Signup failed" });
+    }
+  });
 
-      const { username, password } = req.body;
-      const user = await db.get(`SELECT id, username, password_hash, role FROM users WHERE username = ?`, [username]);
-      if (!user) return res.status(401).json({ error: "Invalid credentials" });
+  // Confirm user email
+  router.post("/confirm", async (req, res) => {
+    const { username, code } = req.body;
+    if (!username || !code) {
+      return res.status(400).json({ error: "username and code required" });
+    }
 
-      const ok = await bcrypt.compare(password, user.password_hash);
-      if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+    try {
+      await client.send(
+        new ConfirmSignUpCommand({
+          ClientId: process.env.COGNITO_CLIENT_ID,
+          Username: username,
+          ConfirmationCode: code,
+          SecretHash: secretHash(username),
+        })
+      );
+      res.json({ message: "Account confirmed" });
+    } catch (err) {
+      console.error("Cognito confirm failed:", err);
+      res.status(400).json({ error: err.message || "Confirm failed" });
+    }
+  });
 
-      const token = jwt.sign(
-        { id: user.id, username: user.username, role: user.role },
-        process.env.JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRES || "1h" }
+  // Login user
+  router.post("/login", async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: "username and password required" });
+    }
+
+    try {
+      const result = await client.send(
+        new InitiateAuthCommand({
+          AuthFlow: AuthFlowType.USER_PASSWORD_AUTH,
+          ClientId: process.env.COGNITO_CLIENT_ID,
+          AuthParameters: {
+            USERNAME: username,
+            PASSWORD: password,
+            ...(process.env.COGNITO_CLIENT_SECRET
+              ? { SECRET_HASH: secretHash(username) }
+              : {}),
+          },
+        })
       );
 
-      return res.json({ token });
+      const token = result.AuthenticationResult.IdToken;
+      res.json({ token });
+    } catch (err) {
+      console.error("Cognito login failed:", err);
+      res.status(401).json({ error: "Invalid credentials" });
     }
-  );
+  });
 
   return router;
 }
