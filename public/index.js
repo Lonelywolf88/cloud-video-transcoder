@@ -152,7 +152,15 @@ function renderVideos(items) {
         method: "DELETE",
         headers,
       });
-      if (!res.ok && res.status !== 204) return alert("Delete failed");
+      if (!res.ok && res.status !== 204) {
+        try {
+          const data = await res.json();
+          alert(data.error || "Delete failed");
+        } catch {
+          alert("Delete failed");
+        }
+        return;
+      }
       await listVideos();
     });
     node.querySelector(".video-card").appendChild(del);
