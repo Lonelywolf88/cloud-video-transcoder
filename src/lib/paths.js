@@ -1,4 +1,4 @@
-import { S3Client, DeleteObjectCommand, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, DeleteObjectCommand, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
@@ -415,4 +415,4 @@ export const usersKeyHelpers = {
   }
 };
 
-export { PutObjectCommand, GetObjectCommand, DeleteObjectCommand };
+export { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand };
