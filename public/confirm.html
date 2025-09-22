@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Confirm Account • Video Transcoder</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .bg-court { 
+      background: radial-gradient(1200px 600px at 20% -10%, #7dd3fc33, transparent),
+                  radial-gradient(1200px 600px at 80% 110%, #86efac33, transparent),
+                  linear-gradient(135deg, #0b1220 0%, #0f172a 100%);
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style> body{font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif} </style>
+</head>
+<body class="bg-court min-h-screen text-slate-100">
+  <div class="min-h-screen grid place-items-center px-6">
+    <div class="w-full max-w-md bg-white/10 backdrop-blur-md rounded-2xl p-8 border border-white/10 shadow-xl">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="h-10 w-10 grid place-items-center rounded-xl bg-emerald-500/20 border border-emerald-400/30">🔑</div>
+        <h1 class="text-xl font-semibold">Confirm Account</h1>
+      </div>
+      <p class="text-slate-300 mb-6">Enter the confirmation code we emailed you.</p>
+
+      <form id="confirmForm">
+        <label class="block text-sm text-slate-300 mb-2">Username</label>
+        <input id="username" class="w-full mb-4 px-4 py-3 rounded-lg bg-slate-900/60 border border-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Username" required />
+
+        <label class="block text-sm text-slate-300 mb-2">Confirmation Code</label>
+        <input id="code" class="w-full mb-6 px-4 py-3 rounded-lg bg-slate-900/60 border border-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="123456" required />
+
+        <button type="submit" class="w-full py-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold transition-colors">Confirm</button>
+      </form>
+
+      <p class="text-xs text-slate-400 mt-4">
+        Back to 
+        <a href="login.html" class="text-emerald-400 hover:underline">Login</a>
+      </p>
+    </div>
+  </div>
+
+  <script src="confirm.js"></script>
+</body>
+</html>
