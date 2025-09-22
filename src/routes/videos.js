@@ -1,7 +1,7 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { body, query, validationResult } from "express-validator";
-import { authRequired } from "../middleware/auth.js";
+import { authRequired, requireGroup } from "../middleware/auth.js"; // ✅ import requireGroup
 import { upload } from "../lib/upload.js";
 import { PutObjectCommand, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import {
@@ -56,6 +56,7 @@ function buildVideoResponse(video) {
 export function videoRoutes() {
   const router = Router();
 
+  // 🔹 Upload video — any authenticated user
   router.post(
     "/videos",
     authRequired,
@@ -74,7 +75,7 @@ export function videoRoutes() {
         return res.status(400).json({ error: "Only video/mp4 uploads are supported" });
       }
 
-      const userId = req.user.id;
+      const userId = req.user.sub; // 🔹 use Cognito sub as unique userId
       const videoId = crypto.randomUUID();
       const title = req.body.title || req.file.originalname || "video";
       const duration = normalizeDuration(req.body.duration);
@@ -110,6 +111,7 @@ export function videoRoutes() {
     }
   );
 
+  // 🔹 List videos — any authenticated user
   router.get(
     "/videos",
     authRequired,
@@ -121,7 +123,7 @@ export function videoRoutes() {
     query("per_page").optional().isInt({ min: 1, max: 100 }).toInt(),
     async (req, res) => {
       try {
-        const userId = req.user.id;
+        const userId = req.user.sub;
         const statusFilter = req.query.status;
         const tagFilter = req.query.tag;
         const search = req.query.q?.toString().toLowerCase();
@@ -132,17 +134,11 @@ export function videoRoutes() {
 
         const items = await videoRepo.listByUser(userId);
         const filtered = items.filter((item) => {
-          if (statusFilter && item.status !== statusFilter) {
-            return false;
-          }
-          if (search && item.title && !item.title.toLowerCase().includes(search)) {
-            return false;
-          }
+          if (statusFilter && item.status !== statusFilter) return false;
+          if (search && item.title && !item.title.toLowerCase().includes(search)) return false;
           if (tagFilter) {
             const tags = tagStrings(item.tags);
-            if (!tags.includes(tagFilter)) {
-              return false;
-            }
+            if (!tags.includes(tagFilter)) return false;
           }
           return true;
         });
@@ -163,9 +159,10 @@ export function videoRoutes() {
     }
   );
 
+  // 🔹 Fetch single video — any authenticated user
   router.get("/videos/:id", authRequired, async (req, res) => {
     try {
-      const video = await videoRepo.get(req.user.id, req.params.id);
+      const video = await videoRepo.get(req.user.sub, req.params.id);
       if (!video) {
         return res.status(404).json({ error: "Not found" });
       }
@@ -189,9 +186,10 @@ export function videoRoutes() {
     }
   });
 
+  // 🔹 Cancel processing — any authenticated user (their own video)
   router.post("/videos/:id/cancel", authRequired, async (req, res) => {
     try {
-      const userId = req.user.id;
+      const userId = req.user.sub;
       const videoId = req.params.id;
       const video = await videoRepo.get(userId, videoId);
       if (!video) {
@@ -210,17 +208,16 @@ export function videoRoutes() {
         return res.status(409).json({ error: "Worker is not on this video right now" });
       }
 
-      return res
-        .status(400)
-        .json({ error: `Cannot cancel in status ${video.status}` });
+      return res.status(400).json({ error: `Cannot cancel in status ${video.status}` });
     } catch (err) {
       console.error("Cancel video failed", err);
       return res.status(500).json({ error: "Failed to cancel video" });
     }
   });
 
-  router.delete("/videos/:id", authRequired, async (req, res) => {
-    const userId = req.user.id;
+  // 🔹 Delete video — only Admin group members
+  router.delete("/videos/:id", authRequired, requireGroup("Admin"), async (req, res) => {
+    const userId = req.user.sub;
     const videoId = req.params.id;
 
     try {
@@ -237,16 +234,10 @@ export function videoRoutes() {
       }
 
       const objects = [];
-      if (video.originalKey) {
-        objects.push({ Key: video.originalKey });
-      }
-      if (video.thumbnailKey) {
-        objects.push({ Key: video.thumbnailKey });
-      }
+      if (video.originalKey) objects.push({ Key: video.originalKey });
+      if (video.thumbnailKey) objects.push({ Key: video.thumbnailKey });
       for (const rendition of video.renditions || []) {
-        if (rendition?.s3Key) {
-          objects.push({ Key: rendition.s3Key });
-        }
+        if (rendition?.s3Key) objects.push({ Key: rendition.s3Key });
       }
 
       if (objects.length) {
