@@ -64,7 +64,7 @@ export function videoRoutes() {
     body("contentType").optional().isString(),
     async (req, res) => {
       try {
-        const userId = req.user.id;
+        const userId = req.user.sub;
         const videoId = crypto.randomUUID();
         const originalKey = buildOriginalKey(userId, videoId);
         const { url, expiresIn } = await createUploadUrl({
@@ -93,7 +93,7 @@ export function videoRoutes() {
     body("duration").optional().isNumeric(),
     async (req, res) => {
       const { id: videoId } = req.params;
-      const userId = req.user.id;
+      const userId = req.user.sub;
       const originalKey = buildOriginalKey(userId, videoId);
 
       try {
@@ -196,7 +196,6 @@ export function videoRoutes() {
     query("per_page").optional().isInt({ min: 1, max: 100 }).toInt(),
     async (req, res) => {
       try {
-        const userId = req.user.sub;
         const statusFilter = req.query.status;
         const tagFilter = req.query.tag;
         const search = req.query.q?.toString().toLowerCase();
@@ -205,7 +204,15 @@ export function videoRoutes() {
         const limit = Math.min(Math.max(perPage, 1), 100);
         const offset = (page - 1) * limit;
 
-        const items = await videoRepo.listByUser(userId);
+        let items;
+        if (req.user.groups.includes("Admin")) {
+          // ✅ Admin sees all videos
+          items = await videoRepo.listAll();
+        } else {
+          // ✅ Normal users only see their own
+          items = await videoRepo.listByUser(req.user.sub);
+        }
+
         const filtered = items.filter((item) => {
           if (statusFilter && item.status !== statusFilter) return false;
           if (search && item.title && !item.title.toLowerCase().includes(search)) return false;
@@ -235,7 +242,16 @@ export function videoRoutes() {
   // 🔹 Fetch single video — any authenticated user
   router.get("/videos/:id", authRequired, async (req, res) => {
     try {
-      const video = await videoRepo.get(req.user.sub, req.params.id);
+      let video;
+      if (req.user.groups.includes("Admin")) {
+        // Admin can see any user’s video
+        const all = await videoRepo.listAll();
+        video = all.find(v => v.videoId === req.params.id) || null;
+      } else {
+        // Normal user only sees their own
+        video = await videoRepo.get(req.user.sub, req.params.id);
+      }
+
       if (!video) {
         return res.status(404).json({ error: "Not found" });
       }
@@ -289,46 +305,54 @@ export function videoRoutes() {
   });
 
   // 🔹 Delete video — only Admin group members
-  router.delete("/videos/:id", authRequired, requireGroup("Admin"), async (req, res) => {
-    const userId = req.user.sub;
-    const videoId = req.params.id;
+router.delete("/videos/:id", authRequired, requireGroup("Admin"), async (req, res) => {
+  const videoId = req.params.id;
 
-    try {
-      const video = await videoRepo.get(userId, videoId);
-      if (!video) {
-        return res.status(404).json({ error: "Not found" });
-      }
+  try {
+    let video;
 
-      if (video.status === "processing") {
-        if (getCurrentTranscodeId() === videoId) {
-          cancelCurrentTranscode();
-        }
-        await videoRepo.markFailed(userId, videoId, "deleted by user");
-      }
+    // Admins can see all videos
+    const allVideos = await videoRepo.listAll();
+    video = allVideos.find(v => v.videoId === videoId);
 
-      const objects = [];
-      if (video.originalKey) objects.push({ Key: video.originalKey });
-      if (video.thumbnailKey) objects.push({ Key: video.thumbnailKey });
-      for (const rendition of video.renditions || []) {
-        if (rendition?.s3Key) objects.push({ Key: rendition.s3Key });
-      }
-
-      if (objects.length) {
-        await s3Client.send(
-          new DeleteObjectsCommand({
-            Bucket: S3_BUCKET,
-            Delete: { Objects: objects, Quiet: true }
-          })
-        );
-      }
-
-      await videoRepo.remove(userId, videoId);
-      return res.status(204).end();
-    } catch (err) {
-      console.error("Delete video failed", err);
-      return res.status(500).json({ error: "Failed to delete video" });
+    if (!video) {
+      return res.status(404).json({ error: "Not found" });
     }
-  });
+
+    // If the video is still processing, cancel/mark as failed
+    if (video.status === "processing") {
+      if (getCurrentTranscodeId() === videoId) {
+        cancelCurrentTranscode();
+      }
+      await videoRepo.markFailed(video.userId, videoId, "deleted by admin");
+    }
+
+    // Collect S3 objects to delete
+    const objects = [];
+    if (video.originalKey) objects.push({ Key: video.originalKey });
+    if (video.thumbnailKey) objects.push({ Key: video.thumbnailKey });
+    for (const rendition of video.renditions || []) {
+      if (rendition?.s3Key) objects.push({ Key: rendition.s3Key });
+    }
+
+    if (objects.length) {
+      await s3Client.send(
+        new DeleteObjectsCommand({
+          Bucket: S3_BUCKET,
+          Delete: { Objects: objects, Quiet: true }
+        })
+      );
+    }
+
+    // Remove DynamoDB record using the actual video.userId
+    await videoRepo.remove(video.userId, videoId);
+
+    return res.status(204).end();
+  } catch (err) {
+    console.error("Delete video failed", err);
+    return res.status(500).json({ error: "Failed to delete video" });
+  }
+});
 
   return router;
 }

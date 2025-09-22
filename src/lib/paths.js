@@ -128,6 +128,37 @@ export const videoRepo = {
     return sanitizeVideo(item);
   },
 
+  // ✅ Put listAll() here, NOT inside create()
+  async listAll() {
+    const items = [];
+    let ExclusiveStartKey;
+
+    do {
+      const command = new QueryCommand({
+        TableName: DDB_TABLE,
+        KeyConditionExpression: "#pk = :pk AND begins_with(#sk, :prefix)",
+        ExpressionAttributeNames: {
+          "#pk": PARTITION_KEY_ATTR,
+          "#sk": SORT_KEY_ATTR,
+        },
+        ExpressionAttributeValues: {
+          ":pk": QUT_USERNAME,
+          ":prefix": "USER#",   // matches all users
+        },
+        ExclusiveStartKey,
+      });
+
+      const { Items = [], LastEvaluatedKey } = await ddbDocClient.send(command);
+      items.push(...Items.map(sanitizeVideo).filter(Boolean));
+      ExclusiveStartKey = LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+
+    return items.sort((a, b) =>
+      (b.createdAt || "").localeCompare(a.createdAt || "")
+    );
+  },
+
+
   async get(userId, videoId) {
     const command = new GetCommand({
       TableName: DDB_TABLE,
@@ -396,6 +427,7 @@ export const videoRepo = {
     });
     await ddbDocClient.send(command);
   }
+  
 };
 
 export const usersKeyHelpers = {
@@ -414,5 +446,6 @@ export const usersKeyHelpers = {
     };
   }
 };
+
 
 export { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand };

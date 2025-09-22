@@ -47,23 +47,25 @@ function shortLabel(v) {
   return t.length > 60 ? t.slice(0, 57) + "…" : t;
 }
 
-function renderVideos(items) {
+async function renderVideos(items) {
   videosEl.innerHTML = "";
   for (const v of items) {
     const node = tpl.content.cloneNode(true);
     node.querySelector(".title").textContent = shortLabel(v);
+
     const statusEl = node.querySelector(".status");
     statusEl.textContent = v.status;
-    statusEl.className = `status text-xs px-2 py-1 rounded ${badgeClass(
-      v.status
-    )}`;
+    statusEl.className = `status text-xs px-2 py-1 rounded ${badgeClass(v.status)}`;
 
+    // Thumbnail
     const img = node.querySelector(".thumb");
-    img.src = `${API}/videos/${v.id}/thumb?token=${encodeURIComponent(token)}`;
-    img.alt = v.title || `Video ${v.id}`;
-    img.onerror = () => {
+    try {
+      const thumbRes = await fetchJSON(`${API}/videos/${v.id}/thumb`);
+      img.src = thumbRes.url;
+    } catch {
       img.classList.add("opacity-30");
-    };
+    }
+    img.alt = v.title || `Video ${v.id}`;
 
     if (v.status !== "completed") {
       node.querySelector(".playBtn").disabled = true;
@@ -78,49 +80,50 @@ function renderVideos(items) {
       return btn;
     };
 
-    node.querySelector(".playBtn").addEventListener("click", () => {
+    // Play
+    node.querySelector(".playBtn").addEventListener("click", async () => {
       player.classList.remove("hidden");
-      const url = `${API}/videos/${
-        v.id
-      }/stream?res=720&token=${encodeURIComponent(token)}`;
-      player.src = url;
-      player.play();
+      try {
+        const streamRes = await fetchJSON(`${API}/videos/${v.id}/stream?res=720`);
+        player.src = streamRes.url;
+        await player.play();
+      } catch {
+        alert("Failed to get stream URL");
+      }
     });
-    maybeDisable(".dl1080").addEventListener("click", () =>
-      window.open(
-        `${API}/videos/${v.id}/download?res=1080&token=${encodeURIComponent(
-          token
-        )}`
-      )
-    );
-    maybeDisable(".dl720").addEventListener("click", () =>
-      window.open(
-        `${API}/videos/${v.id}/download?res=720&token=${encodeURIComponent(
-          token
-        )}`
-      )
-    );
-    maybeDisable(".dl480").addEventListener("click", () =>
-      window.open(
-        `${API}/videos/${v.id}/download?res=480&token=${encodeURIComponent(
-          token
-        )}`
-      )
-    );
 
-    // tags chips
-    // tags chips
+    // Downloads
+    maybeDisable(".dl1080").addEventListener("click", async () => {
+      try {
+        const dlRes = await fetchJSON(`${API}/videos/${v.id}/download?res=1080`);
+        window.open(dlRes.url);
+      } catch {
+        alert("Download failed");
+      }
+    });
+    maybeDisable(".dl720").addEventListener("click", async () => {
+      try {
+        const dlRes = await fetchJSON(`${API}/videos/${v.id}/download?res=720`);
+        window.open(dlRes.url);
+      } catch {
+        alert("Download failed");
+      }
+    });
+    maybeDisable(".dl480").addEventListener("click", async () => {
+      try {
+        const dlRes = await fetchJSON(`${API}/videos/${v.id}/download?res=480`);
+        window.open(dlRes.url);
+      } catch {
+        alert("Download failed");
+      }
+    });
+
+    // Tags
     const tagsWrap = node.querySelector(".tags");
-    tagsWrap.innerHTML = ""; // clear existing
-    // prefer v.tags (from backend), fallback to v.auto_tags if you haven’t updated API yet
-    const tags = Array.isArray(v.tags)
-      ? v.tags
-      : Array.isArray(v.auto_tags)
-      ? v.auto_tags
-      : [];
+    tagsWrap.innerHTML = "";
+    const tags = Array.isArray(v.tags) ? v.tags : Array.isArray(v.auto_tags) ? v.auto_tags : [];
     if (tags.length) {
       for (const t of tags.slice(0, 5)) {
-        // show top 5
         const chip = document.createElement("button");
         chip.type = "button";
         chip.textContent = t;
@@ -135,13 +138,9 @@ function renderVideos(items) {
         });
         tagsWrap.appendChild(chip);
       }
-    } else {
-      // optional: hide the container if no tags
-      // tagsWrap.classList.add("hidden");
     }
 
-    // failed error message + delete button
-    // Delete button for all statuses
+    // Delete
     const del = document.createElement("button");
     del.textContent = "Delete";
     del.className =
@@ -169,12 +168,15 @@ function renderVideos(items) {
   }
 }
 
+// Pagination + filters
 let page = 1;
 const perPage = 6;
 let statusFilter = "";
 let qFilter = "";
 let sort = "-created_at";
 let tagFilter = "";
+
+let lastRendered = "";
 
 async function listVideos() {
   try {
@@ -189,12 +191,16 @@ async function listVideos() {
     const res = await fetch(`${API}/videos?${params.toString()}`, { headers });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    renderVideos(data.items || []);
+
+    // Only re-render if changed
+    const snapshot = JSON.stringify(data.items || []);
+    if (snapshot === lastRendered) return;
+    lastRendered = snapshot;
+
+    await renderVideos(data.items || []);
     const total = Number(res.headers.get("X-Total-Count")) || data.total || 0;
     const last = Math.max(1, Math.ceil(total / perPage));
-    document.getElementById(
-      "pageInfo"
-    ).textContent = `Page ${page} / ${last} (${total} total)`;
+    document.getElementById("pageInfo").textContent = `Page ${page} / ${last} (${total} total)`;
     document.getElementById("prevPage").disabled = page <= 1;
     document.getElementById("nextPage").disabled = page >= last;
   } catch (e) {
@@ -202,7 +208,7 @@ async function listVideos() {
   }
 }
 
-// upload
+// Upload
 const uploadBtn = document.getElementById("uploadBtn");
 const fileInput = document.getElementById("fileInput");
 const titleInput = document.getElementById("title");
@@ -223,7 +229,7 @@ uploadBtn?.addEventListener("click", async () => {
   await listVideos();
 });
 
-// Filters and pagination UI
+// Filters + pagination controls
 document.getElementById("applyFilters")?.addEventListener("click", () => {
   qFilter = document.getElementById("q").value.trim();
   tagFilter = document.getElementById("tag").value.trim();
@@ -243,11 +249,11 @@ document.getElementById("nextPage")?.addEventListener("click", () => {
   listVideos();
 });
 
-// poll for status while there are non-completed videos
+// Poll for updates (15s instead of 5s)
 setInterval(async () => {
   try {
     await listVideos();
   } catch {}
-}, 5000);
+}, 15000);
 
 listVideos();

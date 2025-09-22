@@ -1,5 +1,4 @@
 import { Router } from "express";
-import mime from "mime-types";
 import { authRequired } from "../middleware/auth.js";
 import { videoRepo } from "../lib/paths.js";
 import { createDownloadUrl } from "../lib/s3Presign.js";
@@ -16,72 +15,72 @@ function chooseKey(video, resolution) {
 export function mediaRoutes() {
   const router = Router();
 
+  async function findVideo(req) {
+    const videoId = req.params.id;
+    if (req.user.groups.includes("Admin")) {
+      const all = await videoRepo.listAll();
+      return all.find(v => v.videoId === videoId) || null;
+    }
+    return await videoRepo.get(req.user.sub, videoId);
+  }
+
+  // 🎬 Stream video
   router.get("/videos/:id/stream", authRequired, async (req, res) => {
     try {
-      const video = await videoRepo.get(req.user.sub, req.params.id);
-      if (!video) {
-        return res.status(404).json({ error: "Not found" });
-      }
+      const video = await findVideo(req);
+      if (!video) return res.status(404).json({ error: "Not found" });
 
       const resolution = (req.query.res || "original").toString();
       const key = chooseKey(video, resolution);
-      if (!key) {
-        return res.status(404).json({ error: "Rendition not found" });
-      }
+      if (!key) return res.status(404).json({ error: "Rendition not found" });
 
-      const { url } = await createDownloadUrl({
+      const { url, expiresIn } = await createDownloadUrl({
         key,
         responseContentType: "video/mp4"
       });
-      return res.redirect(url);
+
+      return res.json({ url, expiresIn });
     } catch (err) {
-      const code = err.code && Number.isInteger(err.code) ? err.code : 500;
       console.error("Stream error", err);
-      if (!res.headersSent) {
-        res.status(code).json({ error: "Stream error" });
-      }
+      if (!res.headersSent) res.status(500).json({ error: "Stream error" });
     }
   });
 
+  // 📥 Download video
   router.get("/videos/:id/download", authRequired, async (req, res) => {
     try {
-      const video = await videoRepo.get(req.user.sub, req.params.id);
-      if (!video) {
-        return res.status(404).json({ error: "Not found" });
-      }
+      const video = await findVideo(req);
+      if (!video) return res.status(404).json({ error: "Not found" });
 
       const resolution = (req.query.res || "original").toString();
       const key = chooseKey(video, resolution);
-      if (!key) {
-        return res.status(404).json({ error: "Rendition not found" });
-      }
+      if (!key) return res.status(404).json({ error: "Rendition not found" });
 
       const filename = `${video.title || "video"}_${resolution}.mp4`;
-      const { url } = await createDownloadUrl({
+      const { url, expiresIn } = await createDownloadUrl({
         key,
         responseDisposition: `attachment; filename="${filename}"`
       });
-      return res.redirect(url);
+
+      return res.json({ url, expiresIn, filename });
     } catch (err) {
-      const code = err.code && Number.isInteger(err.code) ? err.code : 500;
       console.error("Download error", err);
-      if (!res.headersSent) {
-        res.status(code).json({ error: "Download error" });
-      }
+      if (!res.headersSent) res.status(500).json({ error: "Download error" });
     }
   });
 
+  // 🖼️ Thumbnail
   router.get("/videos/:id/thumb", authRequired, async (req, res) => {
     try {
-      const video = await videoRepo.get(req.user.sub, req.params.id);
-      if (!video?.thumbnailKey) {
-        throw Object.assign(new Error("No thumbnail"), { code: 404 });
-      }
-      const { url } = await createDownloadUrl({
+      const video = await findVideo(req);
+      if (!video?.thumbnailKey) throw Object.assign(new Error("No thumbnail"), { code: 404 });
+
+      const { url, expiresIn } = await createDownloadUrl({
         key: video.thumbnailKey,
         responseContentType: "image/jpeg"
       });
-      return res.redirect(url);
+
+      return res.json({ url, expiresIn });
     } catch (err) {
       const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 90" width="160" height="90">
