@@ -61,7 +61,7 @@ export function mediaRoutes() {
 
   router.get("/videos/:id/stream", authRequired, async (req, res) => {
     try {
-      const video = await videoRepo.get(req.user.id, req.params.id);
+      const video = await videoRepo.get(req.user.sub, req.params.id);
       if (!video) {
         return res.status(404).json({ error: "Not found" });
       }
@@ -85,7 +85,7 @@ export function mediaRoutes() {
 
   router.get("/videos/:id/download", authRequired, async (req, res) => {
     try {
-      const video = await videoRepo.get(req.user.id, req.params.id);
+      const video = await videoRepo.get(req.user.sub, req.params.id);
       if (!video) {
         return res.status(404).json({ error: "Not found" });
       }
@@ -109,7 +109,7 @@ export function mediaRoutes() {
 
   router.get("/videos/:id/thumb", authRequired, async (req, res) => {
     try {
-      const video = await videoRepo.get(req.user.id, req.params.id);
+      const video = await videoRepo.get(req.user.sub, req.params.id);
       if (!video?.thumbnailKey) {
         throw Object.assign(new Error("No thumbnail"), { code: 404 });
       }

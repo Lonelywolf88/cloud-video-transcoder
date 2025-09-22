@@ -33,6 +33,6 @@ export function requireGroup(group) {
     if (req.user?.groups.includes(group)) {
       return next();
     }
-    return res.status(403).json({ error: `Requires ${group} group` });
+    return res.status(403).json({ error: `Only ${group}s are allowed to delete this video` });
   };
 }
