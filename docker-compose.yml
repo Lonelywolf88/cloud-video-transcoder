@@ -1,0 +1,25 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cab432-app:latest
+    container_name: cab432-app
+    env_file:
+      - .env
+    environment:
+      - PORT=${PORT:-8000}
+      - AWS_PROFILE=${AWS_PROFILE}
+    volumes:
+      - ${USERPROFILE}/.aws:/root/.aws:ro
+    ports:
+      - "${PORT:-8000}:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3                                                      
+      start_period: 10s
+
+name: cab432
