@@ -1,51 +1,8 @@
 import { Router } from "express";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
 import mime from "mime-types";
 import { authRequired } from "../middleware/auth.js";
-import { videoRepo, s3Client, S3_BUCKET } from "../lib/paths.js";
-
-async function streamS3Object({ key, range }, res, attachmentName) {
-  const params = { Bucket: S3_BUCKET, Key: key };
-  if (range) {
-    params.Range = range;
-  }
-
-  const data = await s3Client.send(new GetObjectCommand(params));
-  if (!data.Body) {
-    throw Object.assign(new Error("Empty object"), { code: 500 });
-  }
-
-  const statusCode = range && data.ContentRange ? 206 : 200;
-  res.status(statusCode);
-
-  const contentType = data.ContentType || mime.lookup(key) || "application/octet-stream";
-  res.setHeader("Content-Type", contentType);
-
-  if (attachmentName) {
-    res.setHeader("Content-Disposition", `attachment; filename="${attachmentName}"`);
-  } else {
-    res.setHeader("Content-Disposition", "inline");
-  }
-
-  if (data.AcceptRanges) {
-    res.setHeader("Accept-Ranges", data.AcceptRanges);
-  }
-  if (data.ContentLength !== undefined) {
-    res.setHeader("Content-Length", data.ContentLength.toString());
-  }
-  if (data.ContentRange) {
-    res.setHeader("Content-Range", data.ContentRange);
-  }
-  if (data.LastModified instanceof Date) {
-    res.setHeader("Last-Modified", data.LastModified.toUTCString());
-  }
-
-  const bodyStream = data.Body;
-  bodyStream.on?.("error", (err) => {
-    res.destroy(err);
-  });
-  bodyStream.pipe(res);
-}
+import { videoRepo } from "../lib/paths.js";
+import { createDownloadUrl } from "../lib/s3Presign.js";
 
 function chooseKey(video, resolution) {
   if (resolution === "original") {
@@ -72,8 +29,11 @@ export function mediaRoutes() {
         return res.status(404).json({ error: "Rendition not found" });
       }
 
-      const range = req.headers.range;
-      await streamS3Object({ key, range }, res);
+      const { url } = await createDownloadUrl({
+        key,
+        responseContentType: "video/mp4"
+      });
+      return res.redirect(url);
     } catch (err) {
       const code = err.code && Number.isInteger(err.code) ? err.code : 500;
       console.error("Stream error", err);
@@ -97,7 +57,11 @@ export function mediaRoutes() {
       }
 
       const filename = `${video.title || "video"}_${resolution}.mp4`;
-      await streamS3Object({ key }, res, filename);
+      const { url } = await createDownloadUrl({
+        key,
+        responseDisposition: `attachment; filename="${filename}"`
+      });
+      return res.redirect(url);
     } catch (err) {
       const code = err.code && Number.isInteger(err.code) ? err.code : 500;
       console.error("Download error", err);
@@ -113,7 +77,11 @@ export function mediaRoutes() {
       if (!video?.thumbnailKey) {
         throw Object.assign(new Error("No thumbnail"), { code: 404 });
       }
-      await streamS3Object({ key: video.thumbnailKey }, res);
+      const { url } = await createDownloadUrl({
+        key: video.thumbnailKey,
+        responseContentType: "image/jpeg"
+      });
+      return res.redirect(url);
     } catch (err) {
       const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 90" width="160" height="90">

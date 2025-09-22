@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { body, query, validationResult } from "express-validator";
 import { authRequired, requireGroup } from "../middleware/auth.js"; // ✅ import requireGroup
 import { upload } from "../lib/upload.js";
-import { PutObjectCommand, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, DeleteObjectsCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import {
   videoRepo,
   s3Client,
@@ -15,6 +15,7 @@ import {
   getCurrentTranscodeId,
   cancelCurrentTranscode
 } from "../worker/transcodeWorker.js";
+import { createUploadUrl } from "../lib/s3Presign.js";
 
 function normalizeDuration(value) {
   if (value === undefined || value === null || value === "") return undefined;
@@ -57,6 +58,78 @@ export function videoRoutes() {
   const router = Router();
 
   // 🔹 Upload video — any authenticated user
+  router.post(
+    "/videos/upload-url",
+    authRequired,
+    body("contentType").optional().isString(),
+    async (req, res) => {
+      try {
+        const userId = req.user.id;
+        const videoId = crypto.randomUUID();
+        const originalKey = buildOriginalKey(userId, videoId);
+        const { url, expiresIn } = await createUploadUrl({
+          key: originalKey,
+          contentType: req.body?.contentType
+        });
+
+        return res.json({
+          videoId,
+          uploadUrl: url,
+          expiresIn,
+          method: "PUT",
+          originalKey
+        });
+      } catch (err) {
+        console.error("Failed to create upload URL", err);
+        return res.status(500).json({ error: "Failed to create upload URL" });
+      }
+    }
+  );
+
+  router.post(
+    "/videos/:id/complete",
+    authRequired,
+    body("title").optional().isString().trim().isLength({ min: 1 }),
+    body("duration").optional().isNumeric(),
+    async (req, res) => {
+      const { id: videoId } = req.params;
+      const userId = req.user.id;
+      const originalKey = buildOriginalKey(userId, videoId);
+
+      try {
+        await s3Client.send(
+          new HeadObjectCommand({ Bucket: S3_BUCKET, Key: originalKey })
+        );
+      } catch (err) {
+        if (err?.name === "NotFound") {
+          return res.status(404).json({ error: "Uploaded object not found" });
+        }
+        console.error("Failed to verify uploaded object", err);
+        return res.status(500).json({ error: "Failed to verify uploaded object" });
+      }
+
+      try {
+        const title = req.body?.title || "video";
+        const duration = normalizeDuration(req.body?.duration);
+        const created = await videoRepo.create({
+          userId,
+          videoId,
+          title,
+          originalKey,
+          duration
+        });
+        notifyTranscodeWorker();
+        return res.status(201).json({ video: buildVideoResponse(created) });
+      } catch (err) {
+        if (err?.name === "ConditionalCheckFailedException") {
+          return res.status(409).json({ error: "Video already exists" });
+        }
+        console.error("Failed to queue uploaded video", err);
+        return res.status(500).json({ error: "Failed to queue uploaded video" });
+      }
+    }
+  );
+
   router.post(
     "/videos",
     authRequired,
