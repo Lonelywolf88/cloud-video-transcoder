@@ -9,7 +9,7 @@ services:
       - .env
     environment:
       - PORT=${PORT:-8000}
-      - AWS_PROFILE=${AWS_PROFILE}
+      - AWS_PROFILE=CAB432-STUDENT-901444280953
     volumes:
       - ${USERPROFILE}/.aws:/root/.aws:ro
     ports:

@@ -1,10 +1,18 @@
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 
-const verifier = CognitoJwtVerifier.create({
-  userPoolId: process.env.COGNITO_USER_POOL_ID,
-  tokenUse: "id", // IdToken includes cognito:groups
-  clientId: process.env.COGNITO_CLIENT_ID,
-});
+let verifier;
+
+/** Ensure verifier is initialized after secrets are loaded */
+function getVerifier() {
+  if (!verifier) {
+    verifier = CognitoJwtVerifier.create({
+      userPoolId: process.env.COGNITO_USER_POOL_ID,
+      tokenUse: "id", // IdToken includes cognito:groups
+      clientId: process.env.COGNITO_CLIENT_ID,
+    });
+  }
+  return verifier;
+}
 
 export async function authRequired(req, res, next) {
   const auth = req.headers.authorization || "";
@@ -12,12 +20,9 @@ export async function authRequired(req, res, next) {
   if (!token) return res.status(401).json({ error: "Missing token" });
 
   try {
-    const payload = await verifier.verify(token);
+    const payload = await getVerifier().verify(token);
 
-    // Attach decoded user to request
     req.user = payload;
-
-    // Extract groups (if none, fallback to empty array)
     req.user.groups = payload["cognito:groups"] || [];
 
     next();
@@ -27,12 +32,13 @@ export async function authRequired(req, res, next) {
   }
 }
 
-// Middleware to check if user belongs to a specific group
 export function requireGroup(group) {
   return (req, res, next) => {
     if (req.user?.groups.includes(group)) {
       return next();
     }
-    return res.status(403).json({ error: `Only ${group}s are allowed to delete this video` });
+    return res
+      .status(403)
+      .json({ error: `Only ${group}s are allowed to delete this video` });
   };
 }

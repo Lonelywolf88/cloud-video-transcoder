@@ -1,3 +1,4 @@
+// src/worker/transcodeWorker.js
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -5,22 +6,28 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
   GetObjectCommand,
-  PutObjectCommand
+  PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import {
   videoRepo,
-  s3Client,
-  S3_BUCKET,
+  getS3Client,
+  getS3Bucket,
   buildRenditionKey,
-  buildThumbnailKey
+  buildThumbnailKey,
 } from "../lib/paths.js";
-import { transcodeProfiles, extractThumbnail, ffprobeDurationSeconds } from "../lib/ffmpeg.js";
+import {
+  transcodeProfiles,
+  extractThumbnail,
+  ffprobeDurationSeconds,
+} from "../lib/ffmpeg.js";
 import { classifyImageAtPath } from "../lib/tagger.js";
 import { ensureParametersLoaded } from "../config/parameterStore.js";
 
 await ensureParametersLoaded(["TRANSCODE_LOCK_TTL_MS"]);
 
-const WORKER_ID = `${os.hostname()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+const WORKER_ID = `${os.hostname()}-${process.pid}-${Math.random()
+  .toString(36)
+  .slice(2, 8)}`;
 const POLL_INTERVAL_MS = Number(process.env.TRANSCODE_POLL_MS || 5000);
 const LOCK_TTL_MS = Number(process.env.TRANSCODE_LOCK_TTL_MS || 5 * 60 * 1000);
 
@@ -28,9 +35,13 @@ let current = null; // { userId, videoId, abortController }
 let running = false;
 let scheduled = false;
 
+function bucket() {
+  return getS3Bucket();
+}
+
 async function downloadOriginal(video, destination) {
-  const data = await s3Client.send(
-    new GetObjectCommand({ Bucket: S3_BUCKET, Key: video.originalKey })
+  const data = await getS3Client().send(
+    new GetObjectCommand({ Bucket: bucket(), Key: video.originalKey })
   );
   if (!data.Body) {
     throw new Error("Original object missing");
@@ -40,12 +51,12 @@ async function downloadOriginal(video, destination) {
 
 async function uploadFileToS3(localPath, key, contentType) {
   const body = fs.createReadStream(localPath);
-  await s3Client.send(
+  await getS3Client().send(
     new PutObjectCommand({
-      Bucket: S3_BUCKET,
+      Bucket: bucket(),
       Key: key,
       Body: body,
-      ContentType: contentType
+      ContentType: contentType,
     })
   );
   const stat = await fsp.stat(localPath);
@@ -69,7 +80,7 @@ async function processVideo(video) {
     const profiles = [
       { resolution: "1080", vf: "scale=-2:1080", crf: 22, ab: "128k", file: path.join(tmpDir, "1080.mp4") },
       { resolution: "720", vf: "scale=-2:720", crf: 23, ab: "128k", file: path.join(tmpDir, "720.mp4") },
-      { resolution: "480", vf: "scale=-2:480", crf: 24, ab: "96k", file: path.join(tmpDir, "480.mp4") }
+      { resolution: "480", vf: "scale=-2:480", crf: 24, ab: "96k", file: path.join(tmpDir, "480.mp4") },
     ];
 
     await transcodeProfiles(
@@ -85,12 +96,14 @@ async function processVideo(video) {
       renditions.push({
         resolution: profile.resolution,
         s3Key: key,
-        sizeBytes
+        sizeBytes,
       });
     }
 
     const thumbnailPath = path.join(tmpDir, "thumbnail.jpg");
-    await extractThumbnail(originalPath, thumbnailPath, 3, { signal: abortController.signal });
+    await extractThumbnail(originalPath, thumbnailPath, 3, {
+      signal: abortController.signal,
+    });
     const thumbnailKey = buildThumbnailKey(userId, videoId);
     await uploadFileToS3(thumbnailPath, thumbnailKey, "image/jpeg");
 
@@ -105,10 +118,13 @@ async function processVideo(video) {
       duration,
       thumbnailKey,
       renditions,
-      tags
+      tags,
     });
   } catch (err) {
-    const message = err?.name === "AbortError" ? "Canceled by user" : err?.message || "Transcode failed";
+    const message =
+      err?.name === "AbortError"
+        ? "Canceled by user"
+        : err?.message || "Transcode failed";
     console.error("[worker] transcode failed", userId, videoId, err);
     await videoRepo.markFailed(userId, videoId, message).catch(() => {});
   } finally {

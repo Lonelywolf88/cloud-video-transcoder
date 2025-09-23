@@ -1,3 +1,4 @@
+// src/index.js
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
@@ -8,11 +9,19 @@ import { startTranscodeWorker } from "./worker/transcodeWorker.js";
 import { mediaRoutes } from "./routes/media.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+// 🔐 Config loaders
 import { ensureParametersLoaded } from "./config/parameterStore.js";
+import { loadSecrets } from "./config/secretManager.js";
 
 const app = express();
 
 const bootstrap = async () => {
+  // 1. Load secrets first (sensitive values)
+  await loadSecrets();
+  console.log("✅ Secrets loaded from AWS Secrets Manager");
+
+  // 2. Load parameter store values (non-sensitive configs)
   await ensureParametersLoaded([
     "AWS_REGION",
     "PORT",
@@ -23,6 +32,9 @@ const bootstrap = async () => {
     "QUT_USERNAME",
     "TRANSCODE_LOCK_TTL_MS"
   ]);
+  console.log("✅ Parameters loaded from AWS SSM Parameter Store");
+
+  // Now safe to use env vars
   const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
   const PORT = process.env.PORT || 8000;
   const HOST = process.env.HOST || "0.0.0.0"; // bind to all interfaces for Docker/EC2
@@ -31,8 +43,10 @@ const bootstrap = async () => {
   app.use(morgan("dev"));
   app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || "10mb" }));
 
+  // Health check
   app.get("/api/v1/health", (_req, res) => res.json({ ok: true }));
 
+  // Static frontend
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   app.use("/", express.static(path.join(__dirname, "..", "public")));
@@ -40,17 +54,21 @@ const bootstrap = async () => {
     res.sendFile(path.join(__dirname, "..", "public", "login.html"));
   });
 
+  // API routes
   app.use("/api/v1/auth", authRoutes());
   app.use("/api/v1", meRoutes());
   app.use("/api/v1", videoRoutes());
   app.use("/api/v1", mediaRoutes());
 
+  // Background worker
   startTranscodeWorker();
 
+  // Start server
   const server = app.listen(PORT, HOST, () => {
-    console.log(`Auth API listening on http://${HOST}:${PORT}`);
+    console.log(`🚀 Server listening on http://${HOST}:${PORT}`);
   });
 
+  // Graceful shutdown
   const shutdown = async (sig) => {
     try {
       console.log(`\nReceived ${sig}, shutting down...`);
@@ -65,6 +83,6 @@ const bootstrap = async () => {
 };
 
 bootstrap().catch((e) => {
-  console.error("Failed to start server", e);
+  console.error("❌ Failed to start server", e);
   process.exit(1);
 });
