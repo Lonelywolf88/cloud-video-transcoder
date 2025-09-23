@@ -16,6 +16,9 @@ import {
 } from "../lib/paths.js";
 import { transcodeProfiles, extractThumbnail, ffprobeDurationSeconds } from "../lib/ffmpeg.js";
 import { classifyImageAtPath } from "../lib/tagger.js";
+import { ensureParametersLoaded } from "../config/parameterStore.js";
+
+await ensureParametersLoaded(["TRANSCODE_LOCK_TTL_MS"]);
 
 const WORKER_ID = `${os.hostname()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 const POLL_INTERVAL_MS = Number(process.env.TRANSCODE_POLL_MS || 5000);
