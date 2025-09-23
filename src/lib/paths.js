@@ -1,5 +1,8 @@
 import { S3Client, DeleteObjectCommand, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { ensureParametersLoaded } from "../config/parameterStore.js";
+
+await ensureParametersLoaded(["AWS_REGION", "QUT_USERNAME"]);
 import {
   DynamoDBDocumentClient,
   PutCommand,
@@ -427,7 +430,6 @@ export const videoRepo = {
     });
     await ddbDocClient.send(command);
   }
-  
 };
 
 export const usersKeyHelpers = {

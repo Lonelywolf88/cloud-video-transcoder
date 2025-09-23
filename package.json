@@ -17,6 +17,7 @@
     "@aws-sdk/client-s3": "^3.891.0",
     "@aws-sdk/lib-dynamodb": "^3.653.0",
     "@aws-sdk/s3-request-presigner": "^3.891.0",
+    "@aws-sdk/client-ssm": "^3.893.0",
     "@huggingface/inference": "^4.7.1",
     "aws-jwt-verify": "^5.1.0",
     "bcrypt": "^6.0.0",

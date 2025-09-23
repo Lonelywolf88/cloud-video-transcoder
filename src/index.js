@@ -1,4 +1,3 @@
-import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
@@ -9,17 +8,29 @@ import { startTranscodeWorker } from "./worker/transcodeWorker.js";
 import { mediaRoutes } from "./routes/media.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureParametersLoaded } from "./config/parameterStore.js";
 
 const app = express();
-const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
-app.use(cors({ origin: CORS_ORIGIN === "*" ? undefined : CORS_ORIGIN }));
-app.use(morgan("dev"));
-app.use(express.json({ limit: "10mb" }));
-
-const PORT = process.env.PORT || 8000;
-const HOST = process.env.HOST || "0.0.0.0"; // bind to all interfaces for Docker/EC2
 
 const bootstrap = async () => {
+  await ensureParametersLoaded([
+    "AWS_REGION",
+    "PORT",
+    "JWT_EXPIRES",
+    "HF_IMAGE_MODEL",
+    "TAGS_TOP_K",
+    "TAGS_MIN_SCORE",
+    "QUT_USERNAME",
+    "TRANSCODE_LOCK_TTL_MS"
+  ]);
+  const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+  const PORT = process.env.PORT || 8000;
+  const HOST = process.env.HOST || "0.0.0.0"; // bind to all interfaces for Docker/EC2
+
+  app.use(cors({ origin: CORS_ORIGIN === "*" ? undefined : CORS_ORIGIN }));
+  app.use(morgan("dev"));
+  app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || "10mb" }));
+
   app.get("/api/v1/health", (_req, res) => res.json({ ok: true }));
 
   const __filename = fileURLToPath(import.meta.url);
@@ -42,8 +53,7 @@ const bootstrap = async () => {
 
   const shutdown = async (sig) => {
     try {
-      console.log(`
-Received ${sig}, shutting down...`);
+      console.log(`\nReceived ${sig}, shutting down...`);
       server.close(() => process.exit(0));
       setTimeout(() => process.exit(0), 3000);
     } catch {

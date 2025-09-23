@@ -1,20 +1,35 @@
 import fs from "fs/promises";
+import { ensureParametersLoaded } from "../config/parameterStore.js";
 
-const HF_TOKEN = process.env.HF_API_TOKEN;
-const MODEL = process.env.HF_IMAGE_MODEL || "microsoft/resnet-50";
-const TOP_K = Number(process.env.TAGS_TOP_K || 5);
-const MIN_SCORE = Number(process.env.TAGS_MIN_SCORE || 0);
+let cachedConfig = null;
+
+async function getTaggerConfig() {
+  if (cachedConfig) {
+    return cachedConfig;
+  }
+
+  await ensureParametersLoaded(["HF_IMAGE_MODEL", "TAGS_TOP_K", "TAGS_MIN_SCORE"]);
+
+  const token = process.env.HF_API_TOKEN;
+  const model = process.env.HF_IMAGE_MODEL || "microsoft/resnet-50";
+  const topK = Number(process.env.TAGS_TOP_K ?? 5);
+  const minScore = Number(process.env.TAGS_MIN_SCORE ?? 0);
+
+  cachedConfig = { token, model, topK, minScore };
+  return cachedConfig;
+}
 
 export async function classifyImageAtPath(imagePath) {
-  if (!HF_TOKEN) return [];
+  const { token, model, topK, minScore } = await getTaggerConfig();
+  if (!token) return [];
   const bytes = await fs.readFile(imagePath);
 
   const res = await fetch(
-    `https://api-inference.huggingface.co/models/${encodeURIComponent(MODEL)}`,
+    `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${HF_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/octet-stream",
         "Accept": "application/json",
         "x-wait-for-model": "true"
@@ -31,10 +46,10 @@ export async function classifyImageAtPath(imagePath) {
   if (!Array.isArray(data)) return [];
 
   return data
-    .slice(0, TOP_K)
+    .slice(0, topK)
     .map((entry) => ({
       tag: entry?.label,
       score: typeof entry?.score === "number" ? entry.score : undefined
     }))
-    .filter((entry) => entry.tag && (entry.score === undefined || entry.score >= MIN_SCORE));
+    .filter((entry) => entry.tag && (entry.score === undefined || entry.score >= minScore));
 }
