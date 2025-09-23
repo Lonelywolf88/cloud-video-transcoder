@@ -21,7 +21,7 @@ import {
   cancelCurrentTranscode,
 } from "../worker/transcodeWorker.js";
 import { createUploadUrl } from "../lib/s3Presign.js";
-import { bumpNamespace, buildVideosListKey, cacheGetJSON } from "../lib/cache.js";
+import { bumpNamespace, buildVideosListKey, cacheGetJSON, cacheSetJSON } from "../lib/cache.js";
 
 function normalizeDuration(value) {
   if (value === undefined || value === null || value === "") return undefined;
@@ -388,7 +388,7 @@ export function videoRoutes() {
         }
 
         await videoRepo.remove(video.userId, videoId);
-
+        await bumpNamespace(video.userId);   // 🔹 Invalidate cache for this user
         return res.status(204).end();
       } catch (err) {
         console.error("Delete video failed", err);
