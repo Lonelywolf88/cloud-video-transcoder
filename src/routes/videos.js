@@ -7,20 +7,21 @@ import { upload } from "../lib/upload.js";
 import {
   PutObjectCommand,
   DeleteObjectsCommand,
-  HeadObjectCommand
+  HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import {
   videoRepo,
   getS3Client,
   getS3Bucket,
-  buildOriginalKey
+  buildOriginalKey,
 } from "../lib/paths.js";
 import {
   notifyTranscodeWorker,
   getCurrentTranscodeId,
-  cancelCurrentTranscode
+  cancelCurrentTranscode,
 } from "../worker/transcodeWorker.js";
 import { createUploadUrl } from "../lib/s3Presign.js";
+import { bumpNamespace, buildVideosListKey, cacheGetJSON } from "../lib/cache.js";
 
 function normalizeDuration(value) {
   if (value === undefined || value === null || value === "") return undefined;
@@ -50,12 +51,14 @@ function buildVideoResponse(video) {
     originalKey: video.originalKey,
     thumbnailKey: video.thumbnailKey,
     renditions: video.renditions || [],
-    tags: (video.tags || []).map(t => (typeof t === "string" ? t : t?.tag)).filter(Boolean),
+    tags: (video.tags || [])
+      .map((t) => (typeof t === "string" ? t : t?.tag))
+      .filter(Boolean),
     errorMessage: video.errorMessage,
     sourceType: video.sourceType,
     sourceUrl: video.sourceUrl,
     createdAt: video.createdAt,
-    updatedAt: video.updatedAt
+    updatedAt: video.updatedAt,
   };
 }
 
@@ -74,7 +77,7 @@ export function videoRoutes() {
         const originalKey = buildOriginalKey(userId, videoId);
         const { url, expiresIn } = await createUploadUrl({
           key: originalKey,
-          contentType: req.body?.contentType
+          contentType: req.body?.contentType,
         });
 
         return res.json({
@@ -82,7 +85,7 @@ export function videoRoutes() {
           uploadUrl: url,
           expiresIn,
           method: "PUT",
-          originalKey
+          originalKey,
         });
       } catch (err) {
         console.error("Failed to create upload URL", err);
@@ -110,7 +113,9 @@ export function videoRoutes() {
           return res.status(404).json({ error: "Uploaded object not found" });
         }
         console.error("Failed to verify uploaded object", err);
-        return res.status(500).json({ error: "Failed to verify uploaded object" });
+        return res
+          .status(500)
+          .json({ error: "Failed to verify uploaded object" });
       }
 
       try {
@@ -121,8 +126,9 @@ export function videoRoutes() {
           videoId,
           title,
           originalKey,
-          duration
+          duration,
         });
+        await bumpNamespace(userId);   // 🔹 Invalidate cache for this user
         notifyTranscodeWorker();
         return res.status(201).json({ video: buildVideoResponse(created) });
       } catch (err) {
@@ -130,7 +136,9 @@ export function videoRoutes() {
           return res.status(409).json({ error: "Video already exists" });
         }
         console.error("Failed to queue uploaded video", err);
-        return res.status(500).json({ error: "Failed to queue uploaded video" });
+        return res
+          .status(500)
+          .json({ error: "Failed to queue uploaded video" });
       }
     }
   );
@@ -150,7 +158,9 @@ export function videoRoutes() {
         return res.status(400).json({ error: "Provide a video file upload" });
       }
       if (req.file.mimetype !== "video/mp4") {
-        return res.status(400).json({ error: "Only video/mp4 uploads are supported" });
+        return res
+          .status(400)
+          .json({ error: "Only video/mp4 uploads are supported" });
       }
 
       const userId = req.user.sub;
@@ -165,7 +175,7 @@ export function videoRoutes() {
             Bucket: getS3Bucket(),
             Key: originalKey,
             Body: req.file.buffer,
-            ContentType: "video/mp4"
+            ContentType: "video/mp4",
           })
         );
 
@@ -174,13 +184,13 @@ export function videoRoutes() {
           videoId,
           title,
           originalKey,
-          duration
+          duration,
         });
-
+        await bumpNamespace(userId);   // 🔹 Invalidate cache for this user
         notifyTranscodeWorker();
 
         return res.status(201).json({
-          video: buildVideoResponse(created)
+          video: buildVideoResponse(created),
         });
       } catch (err) {
         console.error("Video upload failed", err);
@@ -208,6 +218,21 @@ export function videoRoutes() {
         const perPage = req.query.per_page || req.query.pageSize || 10;
         const limit = Math.min(Math.max(perPage, 1), 100);
         const offset = (page - 1) * limit;
+        // 🔹 Build a cache key (per user + filters)
+        const key = await buildVideosListKey({
+          sub: req.user.sub,
+          page,
+          perPage: limit,
+          sort: "default", // you can expand later if you support sorting
+        });
+
+        // 🔹 Try cache
+        const cached = await cacheGetJSON(key);
+        if (cached) {
+          console.log("CACHE_HIT", key);
+          return res.json({ fromCache: true, ...cached });
+        }
+        console.log("CACHE_MISS", key);
 
         let items;
         if (req.user.groups.includes("Admin")) {
@@ -218,7 +243,12 @@ export function videoRoutes() {
 
         const filtered = items.filter((item) => {
           if (statusFilter && item.status !== statusFilter) return false;
-          if (search && item.title && !item.title.toLowerCase().includes(search)) return false;
+          if (
+            search &&
+            item.title &&
+            !item.title.toLowerCase().includes(search)
+          )
+            return false;
           if (tagFilter) {
             const tags = tagStrings(item.tags);
             if (!tags.includes(tagFilter)) return false;
@@ -227,14 +257,23 @@ export function videoRoutes() {
         });
 
         const total = filtered.length;
-        const paginated = filtered.slice(offset, offset + limit).map(buildVideoResponse);
+        const paginated = filtered
+          .slice(offset, offset + limit)
+          .map(buildVideoResponse);
 
-        return res.json({
+        const responsePayload = {
           page,
           pageSize: limit,
           total,
-          items: paginated
-        });
+          items: paginated,
+        };
+
+        // Cache the result for a short TTL (e.g., 30s) to reduce load
+        try {
+          await cacheSetJSON(key, responsePayload, 30);
+        } catch {}
+
+        return res.json(responsePayload);
       } catch (err) {
         console.error("List videos failed", err);
         return res.status(500).json({ error: "Failed to list videos" });
@@ -248,7 +287,7 @@ export function videoRoutes() {
       let video;
       if (req.user.groups.includes("Admin")) {
         const all = await videoRepo.listAll();
-        video = all.find(v => v.videoId === req.params.id) || null;
+        video = all.find((v) => v.videoId === req.params.id) || null;
       } else {
         video = await videoRepo.get(req.user.sub, req.params.id);
       }
@@ -295,10 +334,14 @@ export function videoRoutes() {
         if (getCurrentTranscodeId() === videoId && cancelCurrentTranscode()) {
           return res.json({ canceling: true, status: "processing" });
         }
-        return res.status(409).json({ error: "Worker is not on this video right now" });
+        return res
+          .status(409)
+          .json({ error: "Worker is not on this video right now" });
       }
 
-      return res.status(400).json({ error: `Cannot cancel in status ${video.status}` });
+      return res
+        .status(400)
+        .json({ error: `Cannot cancel in status ${video.status}` });
     } catch (err) {
       console.error("Cancel video failed", err);
       return res.status(500).json({ error: "Failed to cancel video" });
@@ -306,48 +349,53 @@ export function videoRoutes() {
   });
 
   // 🔹 Delete video (Admin only)
-  router.delete("/videos/:id", authRequired, requireGroup("Admin"), async (req, res) => {
-    const videoId = req.params.id;
+  router.delete(
+    "/videos/:id",
+    authRequired,
+    requireGroup("Admin"),
+    async (req, res) => {
+      const videoId = req.params.id;
 
-    try {
-      const allVideos = await videoRepo.listAll();
-      const video = allVideos.find(v => v.videoId === videoId);
+      try {
+        const allVideos = await videoRepo.listAll();
+        const video = allVideos.find((v) => v.videoId === videoId);
 
-      if (!video) {
-        return res.status(404).json({ error: "Not found" });
-      }
-
-      if (video.status === "processing") {
-        if (getCurrentTranscodeId() === videoId) {
-          cancelCurrentTranscode();
+        if (!video) {
+          return res.status(404).json({ error: "Not found" });
         }
-        await videoRepo.markFailed(video.userId, videoId, "deleted by admin");
+
+        if (video.status === "processing") {
+          if (getCurrentTranscodeId() === videoId) {
+            cancelCurrentTranscode();
+          }
+          await videoRepo.markFailed(video.userId, videoId, "deleted by admin");
+        }
+
+        const objects = [];
+        if (video.originalKey) objects.push({ Key: video.originalKey });
+        if (video.thumbnailKey) objects.push({ Key: video.thumbnailKey });
+        for (const rendition of video.renditions || []) {
+          if (rendition?.s3Key) objects.push({ Key: rendition.s3Key });
+        }
+
+        if (objects.length) {
+          await getS3Client().send(
+            new DeleteObjectsCommand({
+              Bucket: getS3Bucket(),
+              Delete: { Objects: objects, Quiet: true },
+            })
+          );
+        }
+
+        await videoRepo.remove(video.userId, videoId);
+
+        return res.status(204).end();
+      } catch (err) {
+        console.error("Delete video failed", err);
+        return res.status(500).json({ error: "Failed to delete video" });
       }
-
-      const objects = [];
-      if (video.originalKey) objects.push({ Key: video.originalKey });
-      if (video.thumbnailKey) objects.push({ Key: video.thumbnailKey });
-      for (const rendition of video.renditions || []) {
-        if (rendition?.s3Key) objects.push({ Key: rendition.s3Key });
-      }
-
-      if (objects.length) {
-        await getS3Client().send(
-          new DeleteObjectsCommand({
-            Bucket: getS3Bucket(),
-            Delete: { Objects: objects, Quiet: true }
-          })
-        );
-      }
-
-      await videoRepo.remove(video.userId, videoId);
-
-      return res.status(204).end();
-    } catch (err) {
-      console.error("Delete video failed", err);
-      return res.status(500).json({ error: "Failed to delete video" });
     }
-  });
+  );
 
   return router;
 }

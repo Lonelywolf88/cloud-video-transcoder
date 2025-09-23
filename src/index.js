@@ -9,7 +9,7 @@ import { startTranscodeWorker } from "./worker/transcodeWorker.js";
 import { mediaRoutes } from "./routes/media.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
+import { connectToMemcached } from "./lib/cache.js";
 // 🔐 Config loaders
 import { ensureParametersLoaded } from "./config/parameterStore.js";
 import { loadSecrets } from "./config/secretManager.js";
@@ -38,7 +38,7 @@ const bootstrap = async () => {
   const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
   const PORT = process.env.PORT || 8000;
   const HOST = process.env.HOST || "0.0.0.0"; // bind to all interfaces for Docker/EC2
-
+  connectToMemcached();
   app.use(cors({ origin: CORS_ORIGIN === "*" ? undefined : CORS_ORIGIN }));
   app.use(morgan("dev"));
   app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || "10mb" }));
