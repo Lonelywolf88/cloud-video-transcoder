@@ -43,6 +43,15 @@ const bootstrap = async () => {
   app.use(morgan("dev"));
   app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || "10mb" }));
 
+  // ===== DEBUG TEMP (thumbnail trace) BEGIN =====
+  app.use((req, _res, next) => {
+    if (req.url.includes('/videos') && req.url.includes('/thumb')) {
+      console.log('[DBG thumb] incoming', req.method, req.url, 'auth hdr?', !!req.headers.authorization);
+    }
+    next();
+  });
+  // ===== DEBUG TEMP (thumbnail trace) END =====
+
   // Health check
   app.get("/api/v1/health", (_req, res) => res.json({ ok: true }));
 

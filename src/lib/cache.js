@@ -24,6 +24,10 @@ function memSetLocal(key, value, ttlSeconds) {
   memoryCache.set(key, { value, exp });
 }
 
+function memDelLocal(key) {
+  memoryCache.delete(key);
+}
+
 export function connectToMemcached() {
   if (memcached) return memcached;
   memcached = new Memcached(memcachedAddress, {
@@ -133,5 +137,52 @@ export async function bumpNamespace(sub) {
 export async function buildVideosListKey({ sub, page, perPage, sort }) {
   const ns = await getNamespace(sub);      // e.g., "0", "1", ...
   return `videos:list:${sub}:v${ns}:p${page}:n${perPage}:s${sort}`;
+}
+
+// ================= Buffer helpers for binary objects (e.g., thumbnails) =================
+
+export async function cacheGetBuffer(key) {
+  try {
+    const m = connectToMemcached();
+    const val = await m.aGet(key);
+    if (!val) return null;
+    if (Buffer.isBuffer(val)) return val;
+    if (typeof val === "string") {
+      // Some drivers may coerce to string
+      try { return Buffer.from(val, "base64"); } catch { return null; }
+    }
+    return null;
+  } catch (_) {
+    useMemoryFallback = true;
+    const raw = memGetLocal(key);
+    if (!raw) return null;
+    if (Buffer.isBuffer(raw)) return raw;
+    if (typeof raw === "string") {
+      try { return Buffer.from(raw, "base64"); } catch { return null; }
+    }
+    return null;
+  }
+}
+
+export async function cacheSetBuffer(key, buffer, ttlSeconds) {
+  if (!Buffer.isBuffer(buffer)) throw new Error("cacheSetBuffer expects Buffer");
+  try {
+    const m = connectToMemcached();
+    await m.aSet(key, buffer, ttlSeconds);
+  } catch (_) {
+    useMemoryFallback = true;
+    try { memSetLocal(key, buffer, ttlSeconds); } catch {}
+  }
+}
+
+export async function cacheDel(key) {
+  try {
+    const m = connectToMemcached();
+    await m.aDel(key);
+  } catch (_) {
+    useMemoryFallback = true;
+  } finally {
+    memDelLocal(key);
+  }
 }
 
