@@ -64,10 +64,10 @@ g57-assessment2-app-main
 - **S3 Bucket names:** g57-assignment2
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -src/routes/video.js
+    -src/routes/media.js
 
 ### In-memory cache
-
 - **ElastiCache instance name:** g57-memcache
 - **What data is being cached?:** Thumbnails from uploaded videos (small JPEG images retrieved from S3) and video metadata (JSON objects containing title, status, tags, renditions, etc.).
 - **Why is this data likely to be accessed frequently?:** Thumbnails are displayed every time users browse the video list, so they are repeatedly requested.Metadata is queried whenever a user opens the dashboard, refreshes the list, or filters videos.
