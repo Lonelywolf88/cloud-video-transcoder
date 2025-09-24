@@ -38,7 +38,20 @@ const bootstrap = async () => {
   const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
   const PORT = process.env.PORT || 8000;
   const HOST = process.env.HOST || "0.0.0.0"; // bind to all interfaces for Docker/EC2
-  connectToMemcached();
+  // Connect & self-test Memcached (non-blocking)
+  try {
+    const m = connectToMemcached();
+    const testKey = 'selftest:' + Date.now();
+    m.set(testKey, '1', 5, (err) => {
+      if (err) return console.warn('[cache] self-test set failed -> using fallback?', err.message || err);
+      m.get(testKey, (gErr, val) => {
+        if (gErr) console.warn('[cache] self-test get failed', gErr.message || gErr);
+        else console.log('[cache] self-test OK (memcached reachable), value=', val);
+      });
+    });
+  } catch (e) {
+    console.warn('[cache] memcached connect threw error -> fallback', e.message || e);
+  }
   app.use(cors({ origin: CORS_ORIGIN === "*" ? undefined : CORS_ORIGIN }));
   app.use(morgan("dev"));
   app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || "10mb" }));

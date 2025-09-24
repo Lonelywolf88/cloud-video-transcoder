@@ -211,26 +211,35 @@ export function videoRoutes() {
     query("per_page").optional().isInt({ min: 1, max: 100 }).toInt(),
     async (req, res) => {
       try {
-        const statusFilter = req.query.status;
-        const tagFilter = req.query.tag;
-        const search = req.query.q?.toString().toLowerCase();
-        const page = req.query.page || 1;
-        const perPage = req.query.per_page || req.query.pageSize || 10;
+    const statusFilter = req.query.status || "";
+    const tagFilter = req.query.tag || "";
+    const search = req.query.q?.toString().toLowerCase() || "";
+    const sortParam = (req.query.sort || "-created_at").toString(); // default newest
+    const page = Number(req.query.page) || 1;
+    const perPage = Number(req.query.per_page || req.query.pageSize) || 6; // default 6
         const limit = Math.min(Math.max(perPage, 1), 100);
         const offset = (page - 1) * limit;
         // 🔹 Build a cache key (per user + filters)
+        // 🔹 Build a cache key (include basic filter/sort params so variants don't collide)
         const key = await buildVideosListKey({
           sub: req.user.sub,
           page,
           perPage: limit,
-          sort: "default", // you can expand later if you support sorting
+          sort: `${sortParam}|s:${statusFilter}|t:${tagFilter}|q:${search}`.slice(0,120) // keep key manageable
         });
 
         // 🔹 Try cache
         const cached = await cacheGetJSON(key);
         if (cached) {
-          console.log("CACHE_HIT", key);
-          return res.json({ fromCache: true, ...cached });
+            console.log("CACHE_HIT", key);
+            // Rebuild a stable string & ETag from cached payload
+            const payloadString = JSON.stringify(cached);
+            const etag = 'W/"vidlist-' + crypto.createHash('sha1').update(payloadString).digest('hex') + '"';
+            if (req.headers['if-none-match'] === etag) {
+              return res.status(304).end();
+            }
+            res.setHeader('ETag', etag);
+            return res.json({ fromCache: true, ...cached });
         }
         console.log("CACHE_MISS", key);
 
@@ -243,37 +252,54 @@ export function videoRoutes() {
 
         const filtered = items.filter((item) => {
           if (statusFilter && item.status !== statusFilter) return false;
-          if (
-            search &&
-            item.title &&
-            !item.title.toLowerCase().includes(search)
-          )
-            return false;
-          if (tagFilter) {
-            const tags = tagStrings(item.tags);
-            if (!tags.includes(tagFilter)) return false;
+          if (search) {
+            const title = (item.title || "").toLowerCase();
+            if (!title.includes(search)) return false;
           }
+            if (tagFilter) {
+              const tags = tagStrings(item.tags);
+              if (!tags.includes(tagFilter)) return false;
+            }
           return true;
         });
 
-        const total = filtered.length;
-        const paginated = filtered
-          .slice(offset, offset + limit)
-          .map(buildVideoResponse);
-
-        const responsePayload = {
-          page,
-          pageSize: limit,
-          total,
-          items: paginated,
+        // 🔹 Sorting
+        const sortFieldRaw = sortParam.startsWith('-') ? sortParam.slice(1) : sortParam;
+        const sortDir = sortParam.startsWith('-') ? -1 : 1;
+        const sortFieldMap = {
+          'created_at': 'createdAt',
+          'title': 'title',
+          'status': 'status'
         };
+        const field = sortFieldMap[sortFieldRaw] || 'createdAt';
+        filtered.sort((a,b) => {
+          const va = (a[field] || '').toString().toLowerCase();
+          const vb = (b[field] || '').toString().toLowerCase();
+          if (va < vb) return -1 * sortDir;
+          if (va > vb) return 1 * sortDir;
+          return 0;
+        });
+
+        const total = filtered.length;
+        const paginated = filtered.slice(offset, offset + limit).map(buildVideoResponse);
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const responsePayload = { page, pageSize: limit, total, totalPages, items: paginated };
+
+        // Compute ETag before caching
+        const payloadString = JSON.stringify(responsePayload);
+        const etag = 'W/"vidlist-' + crypto.createHash('sha1').update(payloadString).digest('hex') + '"';
+        if (req.headers['if-none-match'] === etag) {
+          return res.status(304).end();
+        }
 
         // Cache the result for a short TTL (e.g., 30s) to reduce load
         try {
           await cacheSetJSON(key, responsePayload, 30);
         } catch {}
 
-        return res.json(responsePayload);
+  res.setHeader('ETag', etag);
+  return res.json(responsePayload);
       } catch (err) {
         console.error("List videos failed", err);
         return res.status(500).json({ error: "Failed to list videos" });
