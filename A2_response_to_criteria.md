@@ -25,24 +25,28 @@ Overview
 ### Core - First data persistence service
 
 - **AWS service name:**  S3
-- **What data is being stored?:** video files
-- **Why is this service suited to this data?:** [eg. large files are best suited to blob storage due to size restrictions on other services]
-- **Why is are the other services used not suitable for this data?:**
+- **What data is being stored?:** Raw uploaded video files,transcoded renditions (1080p, 720p, 480p) and thumbnail.
+- **Why is this service suited to this data?:** S3 is optimized for storing large, unstructured binary objects. It provides durability, scalability, and direct integration with video transcoding and CDN delivery.
+- **Why is are the other services used not suitable for this data?:** DynamoDB is designed for structured metadata, not for storing multi-MB or GB video files.
 - **Bucket/instance/table name:** g57-assignment2
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -src/worker/transcodeWorker.js
+    -src/lib/paths.js
+    -src/routes/videos.js
 
 ### Core - Second data persistence service
 
 - **AWS service name:**  DynamoDB
-- **What data is being stored?:** metadata of the videos
-- **Why is this service suited to this data?:**
-- **Why is are the other services used not suitable for this data?:**
+- **What data is being stored?:** Metadata for each video, including title, user ID, status (queued/processing/completed), S3 keys for renditions and thumbnails, tags, and duration.
+- **Why is this service suited to this data?:** DynamoDB provides fast key-value and document storage with low latency, which is ideal for video metadata lookups (listing videos, filtering by tags, checking status). The flexible schema makes it easy to store evolving video attributes.
+- **Why is are the other services used not suitable for this data?:** S3 is optimized for storing large binary objects, but inefficient for querying or filtering structured metadata.
 - **Bucket/instance/table name:**
+g57-assessment2-app-main
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -src/routes/media.js
+    -src/lib/paths.js
 
 ### Third data service
 
@@ -64,20 +68,22 @@ Overview
 
 ### In-memory cache
 
-- **ElastiCache instance name:**
-- **What data is being cached?:** [eg. Thumbnails from YouTube videos obatined from external API]
-- **Why is this data likely to be accessed frequently?:** [ eg. Thumbnails from popular YouTube videos are likely to be shown to multiple users ]
+- **ElastiCache instance name:** g57-memcache
+- **What data is being cached?:** Thumbnails from uploaded videos (small JPEG images retrieved from S3) and video metadata (JSON objects containing title, status, tags, renditions, etc.).
+- **Why is this data likely to be accessed frequently?:** Thumbnails are displayed every time users browse the video list, so they are repeatedly requested.Metadata is queried whenever a user opens the dashboard, refreshes the list, or filters videos.
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -src/lib/cache.js (Memcached connection and helpers like cacheGetJSON, cacheSetJSON, cacheGetBuffer, cacheSetBuffer)
+    -src/routes/videos.js
 
 ### Core - Statelessness
 
-- **What data is stored within your application that is not stored in cloud data services?:** [eg. intermediate video files that have been transcoded but not stabilised]
-- **Why is this data not considered persistent state?:** [eg. intermediate files can be recreated from source if they are lost]
-- **How does your application ensure data consistency if the app suddenly stops?:** [eg. journal used to record data transactions before they are done.  A separate task scans the journal and corrects problems on startup and once every 5 minutes afterwards. ]
+- **What data is stored within your application that is not stored in cloud data services?:** Only temporary files created by the transcode worker (e.g. original downloads from S3, intermediate renditions during ffmpeg processing, and a thumbnail image before upload).
+- **Why is this data not considered persistent state?:** These files are ephemeral — they exist only in the container’s /tmp directory while processing is in progress. After successful transcoding, all renditions and thumbnails are uploaded to S3 and metadata is written to DynamoDB. The temporary files are then deleted. If the container crashes, they can be recreated from the original video in S3.
+- **How does your application ensure data consistency if the app suddenly stops?:** The worker uses DynamoDB to track job state. On startup and at intervals, it checks for “stale” jobs (locked too long) and re-queues them. This ensures that if a container crashes mid-process, another worker can pick up the job and re-process it safely. Because all durable state (video objects and thumbnails in S3, metadata in DynamoDB) is already stored in cloud services, no video data is lost. Playback and downloads use presigned S3 URLs, so the application never persists or proxies video content; clients fetch directly from S3.
 - **Relevant files:**
-    -
+    -src/worker/transcodeWorker.js
+    -src/lib/paths.js + src/routes/videos.js (manage presigned S3 URLs, never store video bytes in app)
 
 ### Graceful handling of persistent connections
 
@@ -118,15 +124,15 @@ Overview
 
 ### Core - DNS with Route53
 
-- **Subdomain**:  [eg. myawesomeapp.cab432.com]
+- **Subdomain**:  g57.cab432.com
 - **Video timestamp:**
 
 ### Parameter store
 
-- **Parameter names:** [eg. n1234567/base_url]
+- **Parameter names:** /cab432/g57/app/{parameter_name}
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -src/config/parameterStore.js
 
 ### Secrets manager
 
