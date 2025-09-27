@@ -1,11 +1,9 @@
 // src/routes/videos.js
 import { Router } from "express";
 import crypto from "node:crypto";
-import { body, query, validationResult } from "express-validator";
+import { body, query } from "express-validator";
 import { authRequired, requireGroup } from "../middleware/auth.js";
-import { upload } from "../lib/upload.js";
 import {
-  PutObjectCommand,
   DeleteObjectsCommand,
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
@@ -65,7 +63,7 @@ function buildVideoResponse(video) {
 export function videoRoutes() {
   const router = Router();
 
-  // 🔹 Upload video — any authenticated user
+  // 🔹 Request a presigned upload URL
   router.post(
     "/videos/upload-url",
     authRequired,
@@ -94,6 +92,7 @@ export function videoRoutes() {
     }
   );
 
+  // 🔹 Mark upload complete and register metadata
   router.post(
     "/videos/:id/complete",
     authRequired,
@@ -113,9 +112,7 @@ export function videoRoutes() {
           return res.status(404).json({ error: "Uploaded object not found" });
         }
         console.error("Failed to verify uploaded object", err);
-        return res
-          .status(500)
-          .json({ error: "Failed to verify uploaded object" });
+        return res.status(500).json({ error: "Failed to verify uploaded object" });
       }
 
       try {
@@ -128,7 +125,7 @@ export function videoRoutes() {
           originalKey,
           duration,
         });
-        await bumpNamespace(userId);   // 🔹 Invalidate cache for this user
+        await bumpNamespace(userId); // 🔹 Invalidate cache
         notifyTranscodeWorker();
         return res.status(201).json({ video: buildVideoResponse(created) });
       } catch (err) {
@@ -136,65 +133,7 @@ export function videoRoutes() {
           return res.status(409).json({ error: "Video already exists" });
         }
         console.error("Failed to queue uploaded video", err);
-        return res
-          .status(500)
-          .json({ error: "Failed to queue uploaded video" });
-      }
-    }
-  );
-
-  router.post(
-    "/videos",
-    authRequired,
-    upload.single("file"),
-    body("title").optional().isString().trim().isLength({ min: 1 }),
-    body("duration").optional().isNumeric(),
-    async (req, res) => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
-      if (!req.file) {
-        return res.status(400).json({ error: "Provide a video file upload" });
-      }
-      if (req.file.mimetype !== "video/mp4") {
-        return res
-          .status(400)
-          .json({ error: "Only video/mp4 uploads are supported" });
-      }
-
-      const userId = req.user.sub;
-      const videoId = crypto.randomUUID();
-      const title = req.body.title || req.file.originalname || "video";
-      const duration = normalizeDuration(req.body.duration);
-      const originalKey = buildOriginalKey(userId, videoId);
-
-      try {
-        await getS3Client().send(
-          new PutObjectCommand({
-            Bucket: getS3Bucket(),
-            Key: originalKey,
-            Body: req.file.buffer,
-            ContentType: "video/mp4",
-          })
-        );
-
-        const created = await videoRepo.create({
-          userId,
-          videoId,
-          title,
-          originalKey,
-          duration,
-        });
-        await bumpNamespace(userId);   // 🔹 Invalidate cache for this user
-        notifyTranscodeWorker();
-
-        return res.status(201).json({
-          video: buildVideoResponse(created),
-        });
-      } catch (err) {
-        console.error("Video upload failed", err);
-        return res.status(500).json({ error: "Failed to store video" });
+        return res.status(500).json({ error: "Failed to queue uploaded video" });
       }
     }
   );
@@ -211,37 +150,32 @@ export function videoRoutes() {
     query("per_page").optional().isInt({ min: 1, max: 100 }).toInt(),
     async (req, res) => {
       try {
-    const statusFilter = req.query.status || "";
-    const tagFilter = req.query.tag || "";
-    const search = req.query.q?.toString().toLowerCase() || "";
-    const sortParam = (req.query.sort || "-created_at").toString(); // default newest
-    const page = Number(req.query.page) || 1;
-    const perPage = Number(req.query.per_page || req.query.pageSize) || 6; // default 6
+        const statusFilter = req.query.status || "";
+        const tagFilter = req.query.tag || "";
+        const search = req.query.q?.toString().toLowerCase() || "";
+        const sortParam = (req.query.sort || "-created_at").toString();
+        const page = Number(req.query.page) || 1;
+        const perPage = Number(req.query.per_page || req.query.pageSize) || 6;
         const limit = Math.min(Math.max(perPage, 1), 100);
         const offset = (page - 1) * limit;
-        // 🔹 Build a cache key (per user + filters)
-        // 🔹 Build a cache key (include basic filter/sort params so variants don't collide)
+
         const key = await buildVideosListKey({
           sub: req.user.sub,
           page,
           perPage: limit,
-          sort: `${sortParam}|s:${statusFilter}|t:${tagFilter}|q:${search}`.slice(0,120) // keep key manageable
+          sort: `${sortParam}|s:${statusFilter}|t:${tagFilter}|q:${search}`.slice(0, 120),
         });
 
-        // 🔹 Try cache
         const cached = await cacheGetJSON(key);
         if (cached) {
-            console.log("CACHE_HIT", key);
-            // Rebuild a stable string & ETag from cached payload
-            const payloadString = JSON.stringify(cached);
-            const etag = 'W/"vidlist-' + crypto.createHash('sha1').update(payloadString).digest('hex') + '"';
-            if (req.headers['if-none-match'] === etag) {
-              return res.status(304).end();
-            }
-            res.setHeader('ETag', etag);
-            return res.json({ fromCache: true, ...cached });
+          const payloadString = JSON.stringify(cached);
+          const etag = 'W/"vidlist-' + crypto.createHash("sha1").update(payloadString).digest("hex") + '"';
+          if (req.headers["if-none-match"] === etag) {
+            return res.status(304).end();
+          }
+          res.setHeader("ETag", etag);
+          return res.json({ fromCache: true, ...cached });
         }
-        console.log("CACHE_MISS", key);
 
         let items;
         if (req.user.groups.includes("Admin")) {
@@ -256,25 +190,20 @@ export function videoRoutes() {
             const title = (item.title || "").toLowerCase();
             if (!title.includes(search)) return false;
           }
-            if (tagFilter) {
-              const tags = tagStrings(item.tags);
-              if (!tags.includes(tagFilter)) return false;
-            }
+          if (tagFilter) {
+            const tags = tagStrings(item.tags);
+            if (!tags.includes(tagFilter)) return false;
+          }
           return true;
         });
 
-        // 🔹 Sorting
-        const sortFieldRaw = sortParam.startsWith('-') ? sortParam.slice(1) : sortParam;
-        const sortDir = sortParam.startsWith('-') ? -1 : 1;
-        const sortFieldMap = {
-          'created_at': 'createdAt',
-          'title': 'title',
-          'status': 'status'
-        };
-        const field = sortFieldMap[sortFieldRaw] || 'createdAt';
-        filtered.sort((a,b) => {
-          const va = (a[field] || '').toString().toLowerCase();
-          const vb = (b[field] || '').toString().toLowerCase();
+        const sortFieldRaw = sortParam.startsWith("-") ? sortParam.slice(1) : sortParam;
+        const sortDir = sortParam.startsWith("-") ? -1 : 1;
+        const sortFieldMap = { created_at: "createdAt", title: "title", status: "status" };
+        const field = sortFieldMap[sortFieldRaw] || "createdAt";
+        filtered.sort((a, b) => {
+          const va = (a[field] || "").toString().toLowerCase();
+          const vb = (b[field] || "").toString().toLowerCase();
           if (va < vb) return -1 * sortDir;
           if (va > vb) return 1 * sortDir;
           return 0;
@@ -283,23 +212,21 @@ export function videoRoutes() {
         const total = filtered.length;
         const paginated = filtered.slice(offset, offset + limit).map(buildVideoResponse);
 
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const responsePayload = { page, pageSize: limit, total, totalPages, items: paginated };
+        const totalPages = Math.max(1, Math.ceil(total / limit));
+        const responsePayload = { page, pageSize: limit, total, totalPages, items: paginated };
 
-        // Compute ETag before caching
         const payloadString = JSON.stringify(responsePayload);
-        const etag = 'W/"vidlist-' + crypto.createHash('sha1').update(payloadString).digest('hex') + '"';
-        if (req.headers['if-none-match'] === etag) {
+        const etag = 'W/"vidlist-' + crypto.createHash("sha1").update(payloadString).digest("hex") + '"';
+        if (req.headers["if-none-match"] === etag) {
           return res.status(304).end();
         }
 
-        // Cache the result for a short TTL (e.g., 30s) to reduce load
         try {
           await cacheSetJSON(key, responsePayload, 30);
         } catch {}
 
-  res.setHeader('ETag', etag);
-  return res.json(responsePayload);
+        res.setHeader("ETag", etag);
+        return res.json(responsePayload);
       } catch (err) {
         console.error("List videos failed", err);
         return res.status(500).json({ error: "Failed to list videos" });
@@ -318,16 +245,11 @@ export function videoRoutes() {
         video = await videoRepo.get(req.user.sub, req.params.id);
       }
 
-      if (!video) {
-        return res.status(404).json({ error: "Not found" });
-      }
+      if (!video) return res.status(404).json({ error: "Not found" });
 
       const payload = buildVideoResponse(video);
       const etagSource = JSON.stringify(payload || {});
-      const etag = `W/"vid-${video.videoId}-${crypto
-        .createHash("sha1")
-        .update(etagSource)
-        .digest("hex")}"`;
+      const etag = `W/"vid-${video.videoId}-${crypto.createHash("sha1").update(etagSource).digest("hex")}"`;
 
       if (req.headers["if-none-match"] === etag) {
         return res.status(304).end();
@@ -347,9 +269,7 @@ export function videoRoutes() {
       const userId = req.user.sub;
       const videoId = req.params.id;
       const video = await videoRepo.get(userId, videoId);
-      if (!video) {
-        return res.status(404).json({ error: "Not found" });
-      }
+      if (!video) return res.status(404).json({ error: "Not found" });
 
       if (video.status === "queued") {
         await videoRepo.markCanceled(userId, videoId);
@@ -360,14 +280,10 @@ export function videoRoutes() {
         if (getCurrentTranscodeId() === videoId && cancelCurrentTranscode()) {
           return res.json({ canceling: true, status: "processing" });
         }
-        return res
-          .status(409)
-          .json({ error: "Worker is not on this video right now" });
+        return res.status(409).json({ error: "Worker is not on this video right now" });
       }
 
-      return res
-        .status(400)
-        .json({ error: `Cannot cancel in status ${video.status}` });
+      return res.status(400).json({ error: `Cannot cancel in status ${video.status}` });
     } catch (err) {
       console.error("Cancel video failed", err);
       return res.status(500).json({ error: "Failed to cancel video" });
@@ -375,53 +291,42 @@ export function videoRoutes() {
   });
 
   // 🔹 Delete video (Admin only)
-  router.delete(
-    "/videos/:id",
-    authRequired,
-    requireGroup("Admin"),
-    async (req, res) => {
-      const videoId = req.params.id;
+  router.delete("/videos/:id", authRequired, requireGroup("Admin"), async (req, res) => {
+    const videoId = req.params.id;
+    try {
+      const allVideos = await videoRepo.listAll();
+      const video = allVideos.find((v) => v.videoId === videoId);
+      if (!video) return res.status(404).json({ error: "Not found" });
 
-      try {
-        const allVideos = await videoRepo.listAll();
-        const video = allVideos.find((v) => v.videoId === videoId);
-
-        if (!video) {
-          return res.status(404).json({ error: "Not found" });
-        }
-
-        if (video.status === "processing") {
-          if (getCurrentTranscodeId() === videoId) {
-            cancelCurrentTranscode();
-          }
-          await videoRepo.markFailed(video.userId, videoId, "deleted by admin");
-        }
-
-        const objects = [];
-        if (video.originalKey) objects.push({ Key: video.originalKey });
-        if (video.thumbnailKey) objects.push({ Key: video.thumbnailKey });
-        for (const rendition of video.renditions || []) {
-          if (rendition?.s3Key) objects.push({ Key: rendition.s3Key });
-        }
-
-        if (objects.length) {
-          await getS3Client().send(
-            new DeleteObjectsCommand({
-              Bucket: getS3Bucket(),
-              Delete: { Objects: objects, Quiet: true },
-            })
-          );
-        }
-
-        await videoRepo.remove(video.userId, videoId);
-        await bumpNamespace(video.userId);   // 🔹 Invalidate cache for this user
-        return res.status(204).end();
-      } catch (err) {
-        console.error("Delete video failed", err);
-        return res.status(500).json({ error: "Failed to delete video" });
+      if (video.status === "processing") {
+        if (getCurrentTranscodeId() === videoId) cancelCurrentTranscode();
+        await videoRepo.markFailed(video.userId, videoId, "deleted by admin");
       }
+
+      const objects = [];
+      if (video.originalKey) objects.push({ Key: video.originalKey });
+      if (video.thumbnailKey) objects.push({ Key: video.thumbnailKey });
+      for (const rendition of video.renditions || []) {
+        if (rendition?.s3Key) objects.push({ Key: rendition.s3Key });
+      }
+
+      if (objects.length) {
+        await getS3Client().send(
+          new DeleteObjectsCommand({
+            Bucket: getS3Bucket(),
+            Delete: { Objects: objects, Quiet: true },
+          })
+        );
+      }
+
+      await videoRepo.remove(video.userId, videoId);
+      await bumpNamespace(video.userId);
+      return res.status(204).end();
+    } catch (err) {
+      console.error("Delete video failed", err);
+      return res.status(500).json({ error: "Failed to delete video" });
     }
-  );
+  });
 
   return router;
 }

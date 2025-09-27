@@ -1,20 +1,31 @@
 import Memcached from "memcached";
 import { promisify } from "node:util";
 
+// =======================================================
+// 🔑 Memcached endpoint from environment / secrets manager
+// =======================================================
 const rawMemEnv = process.env.MEMCACHED_ENDPOINT;
-const memcachedAddress = rawMemEnv || "127.0.0.1:11211"; // fallback for local
-if (!process.env.MEMCACHED_ENDPOINT) {
-  console.log(`[cache] MEMCACHED_ENDPOINT not set, using fallback '${memcachedAddress}'`);
-} else {
-  console.log(`[cache] MEMCACHED_ENDPOINT='${rawMemEnv}' (using '${memcachedAddress}')`);
+
+if (!rawMemEnv) {
+  console.error("❌ MEMCACHED_ENDPOINT not set. Make sure AWS Secrets Manager is loading it!");
+  process.exit(1); // stop the app instead of silently using local
 }
 
+const memcachedAddress = rawMemEnv;
+console.log(`[cache] MEMCACHED_ENDPOINT='${rawMemEnv}' (using '${memcachedAddress}')`);
+
+// =======================================================
+// State
+// =======================================================
 let memcached = null;
 let useMemoryFallback = false;
 let backendLogged = false;
 const memoryCache = new Map(); // key -> { value: string, exp: number|null }
 const nsMemory = new Map();    // sub -> version string e.g. "0", "1"
 
+// =======================================================
+// Local memory helpers (fallback if memcached unavailable)
+// =======================================================
 function memGetLocal(key) {
   const entry = memoryCache.get(key);
   if (!entry) return null;
@@ -34,6 +45,9 @@ function memDelLocal(key) {
   memoryCache.delete(key);
 }
 
+// =======================================================
+// Connect to memcached
+// =======================================================
 export function connectToMemcached() {
   if (memcached) return memcached;
   memcached = new Memcached(memcachedAddress, {
@@ -58,7 +72,7 @@ export function connectToMemcached() {
     useMemoryFallback = true;
   });
 
-  // Promisified helpers (same pattern you used)
+  // Promisified helpers
   memcached.aGet = promisify(memcached.get).bind(memcached);
   memcached.aSet = promisify(memcached.set).bind(memcached);
   memcached.aDel = promisify(memcached.del).bind(memcached);
@@ -70,41 +84,40 @@ export function connectToMemcached() {
   return memcached;
 }
 
-// Read-through get: return JSON object or null
+// =======================================================
+// JSON helpers
+// =======================================================
 export async function cacheGetJSON(key) {
   try {
     const m = connectToMemcached();
     const raw = await m.aGet(key);
-    if (process.env.CACHE_DEBUG === '1') console.log('[cache] get JSON memcached', key, raw ? 'HIT' : 'MISS');
+    if (process.env.CACHE_DEBUG === "1") console.log("[cache] get JSON memcached", key, raw ? "HIT" : "MISS");
     if (!raw) return null;
     try { return JSON.parse(raw); } catch { return null; }
   } catch (_) {
-    // If cache server is unavailable, degrade gracefully using in-memory cache
     useMemoryFallback = true;
-    if (process.env.CACHE_DEBUG === '1') console.log('[cache] get JSON memory (fallback)', key);
+    if (process.env.CACHE_DEBUG === "1") console.log("[cache] get JSON memory (fallback)", key);
     const raw = memGetLocal(key);
     if (!raw) return null;
     try { return JSON.parse(raw); } catch { return null; }
   }
 }
 
-// Set JSON with TTL seconds
 export async function cacheSetJSON(key, value, ttlSeconds) {
   try {
     const m = connectToMemcached();
     await m.aSet(key, JSON.stringify(value), ttlSeconds);
-    if (process.env.CACHE_DEBUG === '1') console.log('[cache] set JSON memcached', key, ttlSeconds);
+    if (process.env.CACHE_DEBUG === "1") console.log("[cache] set JSON memcached", key, ttlSeconds);
   } catch (_) {
-    // Write to in-memory fallback if memcached not available
     useMemoryFallback = true;
-    if (process.env.CACHE_DEBUG === '1') console.log('[cache] set JSON memory (fallback)', key, ttlSeconds);
-    try {
-      memSetLocal(key, JSON.stringify(value), ttlSeconds);
-    } catch {}
+    if (process.env.CACHE_DEBUG === "1") console.log("[cache] set JSON memory (fallback)", key, ttlSeconds);
+    try { memSetLocal(key, JSON.stringify(value), ttlSeconds); } catch {}
   }
 }
 
-// Namespace version token per user so we can “invalidate many” by bumping one key
+// =======================================================
+// Namespace helpers (invalidate-many)
+// =======================================================
 const NS_TTL = 24 * 60 * 60; // 1 day
 async function getNamespace(sub) {
   try {
@@ -112,11 +125,9 @@ async function getNamespace(sub) {
     const key = `ns:videos:list:${sub}`;
     const v = await m.aGet(key);
     if (v) return v;
-    // initialize to "0" if not present
     await m.aSet(key, "0", NS_TTL);
     return "0";
   } catch (_) {
-    // If cache is unavailable, use in-memory namespace
     useMemoryFallback = true;
     if (!nsMemory.has(sub)) nsMemory.set(sub, "0");
     return nsMemory.get(sub);
@@ -127,7 +138,6 @@ export async function bumpNamespace(sub) {
   try {
     const m = connectToMemcached();
     const key = `ns:videos:list:${sub}`;
-    // memcached has 'incr'. If key not set, set then incr.
     return new Promise((resolve) => {
       m.increment(key, 1, (err, val) => {
         if (err || val === false) {
@@ -138,7 +148,6 @@ export async function bumpNamespace(sub) {
       });
     });
   } catch (_) {
-    // If cache unavailable, bump in-memory namespace
     useMemoryFallback = true;
     const cur = nsMemory.get(sub) || "0";
     const next = String(Number(cur) + 1);
@@ -147,29 +156,28 @@ export async function bumpNamespace(sub) {
   }
 }
 
-// Build the cache key for list endpoint
 export async function buildVideosListKey({ sub, page, perPage, sort }) {
-  const ns = await getNamespace(sub);      // e.g., "0", "1", ...
+  const ns = await getNamespace(sub);
   return `videos:list:${sub}:v${ns}:p${page}:n${perPage}:s${sort}`;
 }
 
-// ================= Buffer helpers for binary objects (e.g., thumbnails) =================
-
+// =======================================================
+// Buffer helpers (e.g., thumbnails)
+// =======================================================
 export async function cacheGetBuffer(key) {
   try {
     const m = connectToMemcached();
     const val = await m.aGet(key);
-    if (process.env.CACHE_DEBUG === '1') console.log('[cache] get BUF memcached', key, val ? 'HIT' : 'MISS');
+    if (process.env.CACHE_DEBUG === "1") console.log("[cache] get BUF memcached", key, val ? "HIT" : "MISS");
     if (!val) return null;
     if (Buffer.isBuffer(val)) return val;
     if (typeof val === "string") {
-      // Some drivers may coerce to string
       try { return Buffer.from(val, "base64"); } catch { return null; }
     }
     return null;
   } catch (_) {
     useMemoryFallback = true;
-    if (process.env.CACHE_DEBUG === '1') console.log('[cache] get BUF memory (fallback)', key);
+    if (process.env.CACHE_DEBUG === "1") console.log("[cache] get BUF memory (fallback)", key);
     const raw = memGetLocal(key);
     if (!raw) return null;
     if (Buffer.isBuffer(raw)) return raw;
@@ -185,10 +193,10 @@ export async function cacheSetBuffer(key, buffer, ttlSeconds) {
   try {
     const m = connectToMemcached();
     await m.aSet(key, buffer, ttlSeconds);
-    if (process.env.CACHE_DEBUG === '1') console.log('[cache] set BUF memcached', key, buffer.length, ttlSeconds);
+    if (process.env.CACHE_DEBUG === "1") console.log("[cache] set BUF memcached", key, buffer.length, ttlSeconds);
   } catch (_) {
     useMemoryFallback = true;
-    if (process.env.CACHE_DEBUG === '1') console.log('[cache] set BUF memory (fallback)', key, buffer.length, ttlSeconds);
+    if (process.env.CACHE_DEBUG === "1") console.log("[cache] set BUF memory (fallback)", key, buffer.length, ttlSeconds);
     try { memSetLocal(key, buffer, ttlSeconds); } catch {}
   }
 }
@@ -203,4 +211,3 @@ export async function cacheDel(key) {
     memDelLocal(key);
   }
 }
-

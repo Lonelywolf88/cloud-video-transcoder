@@ -280,34 +280,48 @@ document.getElementById('applyFilters')?.addEventListener('click', () => { curre
 const uploadBtn = document.getElementById('uploadBtn');
 const fileInput = document.getElementById('fileInput');
 const titleInput = document.getElementById('title');
+
 uploadBtn?.addEventListener('click', async () => {
   const f = fileInput.files?.[0];
   if (!f) return alert('Pick a file first');
-  const fd = new FormData();
-  fd.append('file', f);
-  if (titleInput.value) fd.append('title', titleInput.value);
-  const res = await fetch(`${API}/videos`, { method: 'POST', headers, body: fd });
-  if (!res.ok) return alert('Upload failed');
-  titleInput.value = ''; fileInput.value = '';
-  await refreshPage();
+
+  try {
+    // 1. Ask backend for presigned upload URL
+    const presignRes = await fetch(`${API}/videos/upload-url`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ contentType: f.type })
+    });
+    if (!presignRes.ok) throw new Error(`presign HTTP ${presignRes.status}`);
+    const { videoId, uploadUrl } = await presignRes.json();
+
+    // 2. Upload file directly to S3
+    const putRes = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": f.type },
+      body: f
+    });
+    if (!putRes.ok) throw new Error(`S3 PUT HTTP ${putRes.status}`);
+
+    // 3. Mark upload complete
+    const completeRes = await fetch(`${API}/videos/${videoId}/complete`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ title: titleInput.value || f.name })
+    });
+    if (!completeRes.ok) throw new Error(`complete HTTP ${completeRes.status}`);
+
+    // 4. Reset UI + refresh
+    titleInput.value = '';
+    fileInput.value = '';
+    await refreshPage();
+    alert("✅ Uploaded with presigned URL!");
+  } catch (err) {
+    console.error("[upload] failed", err);
+    alert("Upload failed: " + (err.message || err));
+  }
 });
 
-const ytBtn = document.getElementById('ytBtn');
-const ytUrl = document.getElementById('ytUrl');
-ytBtn?.addEventListener('click', async () => {
-  const url = ytUrl.value.trim();
-  if (!url) return alert('Enter a YouTube URL');
-  const body = { youtube_url: url };
-  if (titleInput.value) body.title = titleInput.value;
-  const res = await fetch(`${API}/videos`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) {
-    let msg = 'Import failed';
-    try { const j = await res.json(); msg = j.error || msg; if (j.details) msg += `\n${j.details}`; } catch {}
-    return alert(msg);
-  }
-  titleInput.value = ''; ytUrl.value = '';
-  await refreshPage();
-});
 
 // =============================================
 // Polling

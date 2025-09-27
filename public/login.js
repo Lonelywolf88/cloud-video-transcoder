@@ -28,25 +28,32 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
       if (!resSetup.ok) return alert("Failed to start MFA setup");
       const setupData = await resSetup.json();
 
-      // Create QR UI block
-      const qrDiv = document.createElement("div");
-      qrDiv.className = "mt-4";
-      qrDiv.innerHTML = `
-      <p class="text-sm text-slate-300 mb-2">
-        Scan this QR code with your Authenticator app:
-      </p>
-      <div class="flex justify-center mb-3">
-        <canvas id="qrCanvas"></canvas>
-      </div>
-      <input id="setupOtp" placeholder="Enter code from app"
-        class="w-full mb-3 px-4 py-3 rounded-lg bg-slate-900/60 border border-white/10 focus:ring-2 focus:ring-emerald-400" />
-      <button id="setupBtn"
-        class="w-full py-3 rounded-lg bg-purple-500 hover:bg-purple-400 text-slate-900 font-semibold transition-colors">
-        Verify Setup
-      </button>
-    `;
+      // Clear login button so user can’t press again
+      document.getElementById("loginBtn").style.display = "none";
 
-      document.querySelector(".w-full.max-w-md").appendChild(qrDiv);
+      // Create QR UI block once
+      const container = document.querySelector(".w-full.max-w-md");
+      let qrDiv = document.getElementById("mfaSetupBlock");
+      if (!qrDiv) {
+        qrDiv = document.createElement("div");
+        qrDiv.id = "mfaSetupBlock";
+        qrDiv.className = "mt-4";
+        qrDiv.innerHTML = `
+          <p class="text-sm text-slate-300 mb-2">
+            Scan this QR code with your Authenticator app:
+          </p>
+          <div class="flex justify-center mb-3">
+            <canvas id="qrCanvas"></canvas>
+          </div>
+          <input id="setupOtp" placeholder="Enter code from app"
+            class="w-full mb-3 px-4 py-3 rounded-lg bg-slate-900/60 border border-white/10 focus:ring-2 focus:ring-emerald-400" />
+          <button id="setupBtn"
+            class="w-full py-3 rounded-lg bg-purple-500 hover:bg-purple-400 text-slate-900 font-semibold transition-colors">
+            Verify Setup
+          </button>
+        `;
+        container.appendChild(qrDiv);
+      }
 
       // 🔹 Generate QR into <canvas> using qrcode.js
       const otpauth = `otpauth://totp/VideoTranscoder:${encodeURIComponent(
@@ -59,7 +66,7 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
       });
 
       // Step 2: Verify the OTP user enters
-      document.getElementById("setupBtn").addEventListener("click", async () => {
+      document.getElementById("setupBtn").onclick = async () => {
         const code = document.getElementById("setupOtp").value.trim();
         if (!code) return alert("Enter MFA code");
 
@@ -72,29 +79,38 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
         if (!resVerify.ok) return alert("MFA setup verification failed");
         alert("✅ MFA setup complete. Please login again.");
         window.location.reload();
-      });
+      };
 
       return; // stop here until setup is done
     }
 
     // 🟢 Case 2: MFA required (user already enrolled)
     if (data.mfaRequired) {
-      const otpField = document.createElement("input");
-      otpField.id = "otpCode";
-      otpField.placeholder = "Enter MFA code";
-      otpField.className =
-        "w-full mt-4 px-4 py-3 rounded-lg bg-slate-900/60 border border-white/10 focus:ring-2 focus:ring-emerald-400";
+      // Hide login button
+      document.getElementById("loginBtn").style.display = "none";
 
-      const verifyBtn = document.createElement("button");
-      verifyBtn.innerText = "Verify MFA";
-      verifyBtn.className =
-        "w-full mt-3 py-3 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-slate-900 font-semibold transition-colors";
+      const container = document.querySelector(".w-full.max-w-md");
 
-      document.querySelector(".w-full.max-w-md").appendChild(otpField);
-      document.querySelector(".w-full.max-w-md").appendChild(verifyBtn);
+      // Avoid duplicates — create MFA block once
+      let mfaBlock = document.getElementById("mfaVerifyBlock");
+      if (!mfaBlock) {
+        mfaBlock = document.createElement("div");
+        mfaBlock.id = "mfaVerifyBlock";
+        mfaBlock.className = "mt-4";
+        mfaBlock.innerHTML = `
+          <input id="otpCode" placeholder="Enter MFA code"
+            class="w-full mb-3 px-4 py-3 rounded-lg bg-slate-900/60 border border-white/10 focus:ring-2 focus:ring-emerald-400" />
+          <button id="verifyBtn"
+            class="w-full py-3 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-slate-900 font-semibold transition-colors">
+            Verify MFA
+          </button>
+        `;
+        container.appendChild(mfaBlock);
+      }
 
-      verifyBtn.addEventListener("click", async () => {
-        const code = otpField.value.trim();
+      // Add handler once
+      document.getElementById("verifyBtn").onclick = async () => {
+        const code = document.getElementById("otpCode").value.trim();
         if (!code) return alert("Enter MFA code");
 
         const res2 = await fetch(`${API}/auth/verify-mfa`, {
@@ -108,7 +124,7 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
 
         localStorage.setItem("token", data2.token);
         window.location.href = "/";
-      });
+      };
 
       return;
     }
