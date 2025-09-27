@@ -39,4 +39,19 @@ for dynamo. open the dynamo table and show some table items
 
 dns just open the url just the dns name
 
-presigned have some problem
+
+
+Terraform
+
+1) Go to this link to download https://developer.hashicorp.com/terraform/install
+2) Create a folder called terraform, add three files, main.tf, output.tf and version.tf
+3) run the code below to create 
+
+##### Must cd into terraform folder first
+terraform init
+terraform fmt
+terraform validate
+terraform plan -out tfplan
+terraform apply tfplan
+
+terraform destroy # if want

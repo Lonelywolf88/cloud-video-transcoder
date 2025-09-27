@@ -15,10 +15,11 @@ Overview
 
 - **Name:** Yi Teng Teoh
 - **Student number:** n12138657
-- **Partner name (if applicable):** YourPartner NameHere
-- **Application name:** Video Transcoding App
-- **Two line description:** I/We implemented this very cool app that does Foo, Bar and Baz.
-- **EC2 instance name or ID:**
+- **Partner name (if applicable):** Sin Boon Leon
+- **Student number:** n12126179
+- **Application name:** VideoTranscoder
+- **Two line description:** A video transcoding web application that allows users to upload MP4 files, which are automatically processed into multiple renditions and thumbnails. 
+- **EC2 instance name or ID:** g57-assessment2 / i-03f83524701aa6878
 
 ------------------------------------------------
 
@@ -66,6 +67,9 @@ g57-assessment2-app-main
 - **Relevant files:**
     -src/routes/video.js
     -src/routes/media.js
+    -src/lib/s3Presign.js
+    -public/index.js
+    -src/cors.json
 
 ### In-memory cache
 - **ElastiCache instance name:** g57-memcache
@@ -75,6 +79,7 @@ g57-assessment2-app-main
 - **Relevant files:**
     -src/lib/cache.js (Memcached connection and helpers like cacheGetJSON, cacheSetJSON, cacheGetBuffer, cacheSetBuffer)
     -src/routes/videos.js
+    -src/index.js
 
 ### Core - Statelessness
 
@@ -83,7 +88,7 @@ g57-assessment2-app-main
 - **How does your application ensure data consistency if the app suddenly stops?:** The worker uses DynamoDB to track job state. On startup and at intervals, it checks for “stale” jobs (locked too long) and re-queues them. This ensures that if a container crashes mid-process, another worker can pick up the job and re-process it safely. Because all durable state (video objects and thumbnails in S3, metadata in DynamoDB) is already stored in cloud services, no video data is lost. Playback and downloads use presigned S3 URLs, so the application never persists or proxies video content; clients fetch directly from S3.
 - **Relevant files:**
     -src/worker/transcodeWorker.js
-    -src/lib/paths.js + src/routes/videos.js (manage presigned S3 URLs, never store video bytes in app)
+    -src/lib/paths.js + src/routes/videos.js + src/routes/media.js (manage presigned S3 URLs, never store video bytes in app)
 
 ### Graceful handling of persistent connections
 
@@ -99,14 +104,16 @@ g57-assessment2-app-main
 - **How are authentication tokens handled by the client?:** [eg. Response to login request sets a cookie containing the token.]
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -public/login.js
+    -src/middleware/auth.js
 
 ### Cognito multi-factor authentication
 
 - **What factors are used for authentication:** [eg. password, SMS code]
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -public/login.js
+    -src/middleware/auth.js
 
 ### Cognito federated identities
 
@@ -120,7 +127,9 @@ g57-assessment2-app-main
 - **How are groups used to set permissions?:** [eg. 'admin' users can delete and ban other users]
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -public/login.js
+    -src/middleware/auth.js
+    -src/index.js
 
 ### Core - DNS with Route53
 
@@ -133,18 +142,20 @@ g57-assessment2-app-main
 - **Video timestamp:**
 - **Relevant files:**
     -src/config/parameterStore.js
+    -src/index.js
 
 ### Secrets manager
 
-- **Secrets names:** [eg. n1234567-youtube-api-key]
+- **Secrets names:** group57/A2/secret
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -src/config/secretManager.js
+    -src/index.js
 
 ### Infrastructure as code
 
-- **Technology used:**
-- **Services deployed:**
+- **Technology used:** Terraform
+- **Services deployed:** (S3, DynamoDB, Cognito)
 - **Video timestamp:**
 - **Relevant files:**
     -
