@@ -16,11 +16,68 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
 
     // 🟢 Case 1: User must first SETUP MFA
     if (data.setupRequired) {
-      // (unchanged MFA setup block)
       alert("MFA setup required. Scan the QR code and enter OTP.");
-      // ... existing MFA setup code ...
+
+      const resSetup = await fetch(`${API}/auth/setup-mfa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session: data.session }),
+      });
+      if (!resSetup.ok) return alert("Failed to start MFA setup");
+      const setupData = await resSetup.json();
+
+      const container = document.querySelector(".w-full.max-w-md");
+
+      let qrDiv = document.getElementById("mfaSetupBlock");
+      if (!qrDiv) {
+        qrDiv = document.createElement("div");
+        qrDiv.id = "mfaSetupBlock";
+        qrDiv.className = "mt-4";
+        qrDiv.innerHTML = `
+          <p class="text-sm text-slate-300 mb-2">
+            Scan this QR code with your Authenticator app:
+          </p>
+          <div class="flex justify-center mb-3">
+            <canvas id="qrCanvas"></canvas>
+          </div>
+          <input id="setupOtp" placeholder="Enter code from app"
+            class="w-full mb-3 px-4 py-3 rounded-lg bg-slate-900/60 border border-white/10" />
+          <button id="setupBtn"
+            class="w-full py-3 rounded-lg bg-purple-500 hover:bg-purple-400 text-slate-900 font-semibold transition-colors">
+            Verify Setup
+          </button>
+        `;
+        container.appendChild(qrDiv);
+      }
+
+      // 🔹 Generate QR into canvas
+      const otpauth = `otpauth://totp/VideoTranscoder:${encodeURIComponent(
+        username
+      )}?secret=${setupData.secretCode}&issuer=VideoTranscoder`;
+
+      const qrCanvas = document.getElementById("qrCanvas");
+      QRCode.toCanvas(qrCanvas, otpauth, { width: 200 }, (err) => {
+        if (err) console.error("QR code generation failed:", err);
+      });
+
+      document.getElementById("setupBtn").onclick = async () => {
+        const code = document.getElementById("setupOtp").value.trim();
+        if (!code) return alert("Enter MFA code");
+
+        const resVerify = await fetch(`${API}/auth/verify-setup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session: setupData.session, code }),
+        });
+
+        if (!resVerify.ok) return alert("MFA setup verification failed");
+        alert("✅ MFA setup complete. Please login again.");
+        window.location.reload();
+      };
+
       return;
     }
+
 
     // 🟢 Case 2: MFA required (user already enrolled)
     if (data.mfaRequired) {

@@ -18,6 +18,7 @@ Overview
 - **Partner name (if applicable):** Sin Boon Leon
 - **Student number:** n12126179
 - **Application name:** VideoTranscoder
+- **Group number:** Group 57
 - **Two line description:** A video transcoding web application that allows users to upload MP4 files, which are automatically processed into multiple renditions and thumbnails. 
 - **EC2 instance name or ID:** g57-assessment2 / i-03f83524701aa6878
 

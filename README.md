@@ -8,7 +8,7 @@ Need to do "aws configure sso" to able to sign in to s3
 AWS_REGION=ap-southeast-2
 AWS_ACCOUNT_ID=901444280953
 REPO=g57-a2
-TAG=v6
+TAG=v8
 ECR_URI=901444280953.dkr.ecr.ap-southeast-2.amazonaws.com/g57-a2
 
 aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 901444280953.dkr.ecr.ap-southeast-2.amazonaws.com
@@ -55,3 +55,22 @@ terraform plan -out tfplan
 terraform apply tfplan
 
 terraform destroy # if want
+
+
+
+
+
+#####################
+AWS_REGION: used so the app knows which AWS region to talk to.
+
+PORT: tells the Express server which port to listen on.
+
+JWT_EXPIRES: sets how long login tokens remain valid.
+
+HF_IMAGE_MODEL: stores which HuggingFace image model to call for video topic detection.
+
+TAGS_TOP_K / TAGS_MIN_SCORE: configure filtering thresholds for auto-generated tags.
+
+QUT_USERNAME: identifies the student for marking.
+
+TRANSCODE_LOCK_TTL_MS: timeout for distributed locking of video transcoding jobs.
