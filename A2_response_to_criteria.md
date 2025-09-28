@@ -152,7 +152,7 @@
 
 - **Technology used:** Terraform
 - **Services deployed:** (S3 bucket, DynamoDB table, Cognito user pool, Cognito user pool client)
-- **Explanation**: We used Terraform to provision S3, DynamoDB, and Cognito to demonstrate Infrastructure as Code. For this project, our team deployed the resources manually in AWS, but we also successfully created a demo deployment using Terraform to show our IaC skills.
+- **Explanation**: Our team deployed the resources (S3, DynamoDB, and Cognito) manually in AWS for this project. To demonstrate our ability to use Infrastructure as Code, we also created a successful demo deployment using Terraform.
 - **Video timestamp:**
 - **Relevant files:**
   -terrform/main.tf
