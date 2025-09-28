@@ -15,7 +15,7 @@ Overview
 
 - **Name:** Yi Teng Teoh
 - **Student number:** n12138657
-- **Partner name (if applicable):** Sin Boon Leon
+- **Partner name (if applicable):** Boon Leon Sin
 - **Student number:** n12126179
 - **Application name:** VideoTranscoder
 - **Group number:** Group 57
@@ -125,7 +125,7 @@ The client stores the Cognito ID token (JWT) and refresh token in localStorage. 
 
 ### Cognito groups
 
-- **How are groups used to set permissions?:** only admin users can delete other users
+- **How are groups used to set permissions?:** only admin users can delete other users video
 - **Video timestamp:**
 - **Relevant files:**
     -public/login.js
