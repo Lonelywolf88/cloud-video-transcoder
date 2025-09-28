@@ -100,16 +100,16 @@ g57-assessment2-app-main
 
 ### Core - Authentication with Cognito
 
-- **User pool name:**
-- **How are authentication tokens handled by the client?:** [eg. Response to login request sets a cookie containing the token.]
-- **Video timestamp:**
+- **User pool name:** A2-group57
+- **How are authentication tokens handled by the client?:** 
+The client stores the Cognito ID token (JWT) and refresh token in localStorage. For API requests, the ID token is included in the Authorization header. When the ID token expires, the refresh token is used to get a new one.
 - **Relevant files:**
     -public/login.js
     -src/middleware/auth.js
 
 ### Cognito multi-factor authentication
 
-- **What factors are used for authentication:** [eg. password, SMS code]
+- **What factors are used for authentication:** Password (username + password) and TOTP code from an authenticator app (software token MFA).
 - **Video timestamp:**
 - **Relevant files:**
     -public/login.js
@@ -124,7 +124,7 @@ g57-assessment2-app-main
 
 ### Cognito groups
 
-- **How are groups used to set permissions?:** [eg. 'admin' users can delete and ban other users]
+- **How are groups used to set permissions?:** only admin users can delete other users
 - **Video timestamp:**
 - **Relevant files:**
     -public/login.js
