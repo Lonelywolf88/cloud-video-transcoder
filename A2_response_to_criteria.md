@@ -155,10 +155,12 @@ g57-assessment2-app-main
 ### Infrastructure as code
 
 - **Technology used:** Terraform
-- **Services deployed:** (S3, DynamoDB, Cognito)
+- **Services deployed:** (S3 bucket, DynamoDB table, Cognito user pool, Cognito user pool client)
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    -terrform/main.tf
+    -terrform/output.tf
+    -terrform/version.tf
 
 ### Other (with prior approval only)
 
