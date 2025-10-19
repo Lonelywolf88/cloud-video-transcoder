@@ -1,0 +1,17 @@
+FROM node:20-bookworm-slim
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eux; \
+  apt-get update -o Acquire::Retries=3; \
+  apt-get install -y --no-install-recommends ffmpeg ca-certificates curl; \
+  rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY src ./src
+
+CMD ["node", "src/worker/service.js"]

@@ -5,7 +5,6 @@ import morgan from "morgan";
 import { authRoutes } from "./routes/auth.js";
 import { meRoutes } from "./routes/me.js";
 import { videoRoutes } from "./routes/videos.js";
-import { startTranscodeWorker } from "./worker/transcodeWorker.js";
 import { mediaRoutes } from "./routes/media.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -81,9 +80,6 @@ const bootstrap = async () => {
   app.use("/api/v1", meRoutes());
   app.use("/api/v1", videoRoutes());
   app.use("/api/v1", mediaRoutes());
-
-  // Background worker
-  startTranscodeWorker();
 
   // Start server
   const server = app.listen(PORT, HOST, () => {
