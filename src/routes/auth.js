@@ -116,7 +116,11 @@ export function authRoutes() {
 
       // Normal login (no MFA)
       if (result.AuthenticationResult?.IdToken) {
-        return res.json({ token: result.AuthenticationResult.IdToken });
+        return res.json({
+          token: result.AuthenticationResult.IdToken,
+          refreshToken: result.AuthenticationResult.RefreshToken,
+          expiresIn: result.AuthenticationResult.ExpiresIn,
+        });
       }
 
       res.status(400).json({ error: "Unexpected login response", raw: result });
@@ -135,8 +139,6 @@ export function authRoutes() {
       const result = await client.send(
         new AssociateSoftwareTokenCommand({ Session: session })
       );
-
-      console.log("🔑 AssociateSoftwareToken result:", JSON.stringify(result, null, 2));
 
       res.json({
         secretCode: result.SecretCode, // to generate QR Code
@@ -161,8 +163,6 @@ export function authRoutes() {
           FriendlyDeviceName: "AuthenticatorApp",
         })
       );
-
-      console.log("🔑 VerifySoftwareToken result:", JSON.stringify(result, null, 2));
 
       if (result.Status === "SUCCESS") {
         res.json({ message: "MFA setup complete" });
@@ -198,17 +198,47 @@ export function authRoutes() {
         })
       );
 
-      console.log("🔑 RespondToAuthChallenge result:", JSON.stringify(result, null, 2));
-
       const token = result.AuthenticationResult?.IdToken;
       if (!token) {
         return res.status(400).json({ error: "No token returned", raw: result });
       }
 
-      res.json({ token });
+      res.json({
+        token,
+        refreshToken: result.AuthenticationResult.RefreshToken,
+        expiresIn: result.AuthenticationResult.ExpiresIn,
+      });
     } catch (err) {
       console.error("❌ MFA verification failed:", err);
       res.status(401).json({ error: "MFA verification failed" });
+    }
+  });
+
+  // ---------------- Refresh token ----------------
+  router.post("/refresh", async (req, res) => {
+    const { refreshToken } = req.body;
+    if (!refreshToken) return res.status(400).json({ error: "refreshToken required" });
+
+    try {
+      const result = await client.send(
+        new InitiateAuthCommand({
+          AuthFlow: AuthFlowType.REFRESH_TOKEN_AUTH,
+          ClientId: process.env.COGNITO_CLIENT_ID,
+          AuthParameters: { REFRESH_TOKEN: refreshToken },
+        })
+      );
+
+      if (!result.AuthenticationResult?.IdToken) {
+        return res.status(400).json({ error: "No new token" });
+      }
+
+      res.json({
+        token: result.AuthenticationResult.IdToken,
+        expiresIn: result.AuthenticationResult.ExpiresIn,
+      });
+    } catch (err) {
+      console.error("❌ Refresh failed:", err);
+      res.status(401).json({ error: "Refresh failed" });
     }
   });
 

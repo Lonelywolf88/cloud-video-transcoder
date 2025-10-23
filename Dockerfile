@@ -7,8 +7,10 @@ RUN set -eux;   apt-get update -o Acquire::Retries=3;   apt-get install -y --no-
 ENV NODE_ENV=production     PORT=8000
 
 WORKDIR /app
+
 COPY package*.json ./
 RUN npm ci --omit=dev
+
 COPY src ./src
 COPY public ./public
 

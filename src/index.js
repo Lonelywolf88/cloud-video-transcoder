@@ -5,11 +5,10 @@ import morgan from "morgan";
 import { authRoutes } from "./routes/auth.js";
 import { meRoutes } from "./routes/me.js";
 import { videoRoutes } from "./routes/videos.js";
-import { startTranscodeWorker } from "./worker/transcodeWorker.js";
 import { mediaRoutes } from "./routes/media.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
+import { connectToMemcached } from "./lib/cache.js";
 // 🔐 Config loaders
 import { ensureParametersLoaded } from "./config/parameterStore.js";
 import { loadSecrets } from "./config/secretManager.js";
@@ -38,10 +37,32 @@ const bootstrap = async () => {
   const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
   const PORT = process.env.PORT || 8000;
   const HOST = process.env.HOST || "0.0.0.0"; // bind to all interfaces for Docker/EC2
-
+  // Connect & self-test Memcached (non-blocking)
+  try {
+    const m = connectToMemcached();
+    const testKey = 'selftest:' + Date.now();
+    m.set(testKey, '1', 5, (err) => {
+      if (err) return console.warn('[cache] self-test set failed -> using fallback?', err.message || err);
+      m.get(testKey, (gErr, val) => {
+        if (gErr) console.warn('[cache] self-test get failed', gErr.message || gErr);
+        else console.log('[cache] self-test OK (memcached reachable), value=', val);
+      });
+    });
+  } catch (e) {
+    console.warn('[cache] memcached connect threw error -> fallback', e.message || e);
+  }
   app.use(cors({ origin: CORS_ORIGIN === "*" ? undefined : CORS_ORIGIN }));
   app.use(morgan("dev"));
   app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || "10mb" }));
+
+  // ===== DEBUG TEMP (thumbnail trace) BEGIN =====
+  app.use((req, _res, next) => {
+    if (req.url.includes('/videos') && req.url.includes('/thumb')) {
+      console.log('[DBG thumb] incoming', req.method, req.url, 'auth hdr?', !!req.headers.authorization);
+    }
+    next();
+  });
+  // ===== DEBUG TEMP (thumbnail trace) END =====
 
   // Health check
   app.get("/api/v1/health", (_req, res) => res.json({ ok: true }));
@@ -59,9 +80,6 @@ const bootstrap = async () => {
   app.use("/api/v1", meRoutes());
   app.use("/api/v1", videoRoutes());
   app.use("/api/v1", mediaRoutes());
-
-  // Background worker
-  startTranscodeWorker();
 
   // Start server
   const server = app.listen(PORT, HOST, () => {
