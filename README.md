@@ -505,6 +505,7 @@ ISC (see `package.json`)
 ## Microservices Deployment
 
 - **Service split**: `Dockerfile` builds the Express API container, `Dockerfile.worker` builds the CPU-intensive `transcodeWorker` service. Each service runs independently (ECS task or EC2 instance) and only shares AWS resources such as S3, DynamoDB, Parameter Store, Secrets Manager, and ElastiCache.
+- **API runtime**: start locally with `npm run api` (or `docker compose up app`), which executes `src/api/service.js` so the Express microservice can be deployed independently of workers.
 - **Local compose**: `docker compose up --build` now starts `app`, `worker`, and `memcached`. To run only the worker for isolated testing use `docker compose up worker memcached`.
 - **Manual job injection**: If the API service is not yet available you can enqueue a job by (1) uploading an `original.mp4` into `s3://$S3_BUCKET/user/<USER_ID>/videos/<VIDEO_ID>/original.mp4`, and (2) inserting the matching DynamoDB item with status `queued` (see `src/lib/paths.js::videoRepo.create` for the item shape). The worker will poll DynamoDB and pick it up.
 - **Local env**: Supply AWS credentials (via `~/.aws` volume) and either set `USE_PARAMETER_STORE=false` with explicit env vars in `.env`, or sign in with AWS SSO so the worker can read Parameter Store and Secrets Manager at startup.

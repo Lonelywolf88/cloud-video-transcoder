@@ -7,9 +7,9 @@ Need to do "aws configure sso" to able to sign in to s3
 1. docker
 AWS_REGION=ap-southeast-2
 AWS_ACCOUNT_ID=901444280953
-REPO=g57-a2
-TAG=v8
-ECR_URI=901444280953.dkr.ecr.ap-southeast-2.amazonaws.com/g57-a2
+REPO=g58-a3
+TAG=v2
+ECR_URI=901444280953.dkr.ecr.ap-southeast-2.amazonaws.com/g58-a3
 
 aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 901444280953.dkr.ecr.ap-southeast-2.amazonaws.com
 docker build -t ${REPO}:${TAG} .
@@ -74,3 +74,4 @@ TAGS_TOP_K / TAGS_MIN_SCORE: configure filtering thresholds for auto-generated t
 QUT_USERNAME: identifies the student for marking.
 
 TRANSCODE_LOCK_TTL_MS: timeout for distributed locking of video transcoding jobs.
+To launch the API microservice locally (without the worker), run `npm run api` or `docker compose up app`.

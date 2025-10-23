@@ -1,4 +1,4 @@
-services:app:
+services:
   app:
     build:
       dockerfile: Dockerfile
@@ -32,14 +32,14 @@ services:app:
     image: cab432-worker:latest
     container_name: cab432-worker
     env_file:
-    - .env
+      - .env
     environment:
-    - AWS_PROFILE=CAB432-STUDENT-901444280953
-    - MEMCACHED_ENDPOINT=memcached:11211
+      - AWS_PROFILE=CAB432-STUDENT-901444280953
+      - MEMCACHED_ENDPOINT=memcached:11211
     volumes:
-    - ${USERPROFILE}/.aws:/root/.aws:ro
+      - ${USERPROFILE}/.aws:/root/.aws:ro
     depends_on:
-    - memcached
+      - memcached
     restart: unless-stopped
 
   memcached:

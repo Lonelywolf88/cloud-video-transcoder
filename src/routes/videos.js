@@ -13,11 +13,6 @@ import {
   getS3Bucket,
   buildOriginalKey,
 } from "../lib/paths.js";
-import {
-  notifyTranscodeWorker,
-  getCurrentTranscodeId,
-  cancelCurrentTranscode,
-} from "../worker/transcodeWorker.js";
 import { createUploadUrl } from "../lib/s3Presign.js";
 import { bumpNamespace, buildVideosListKey, cacheGetJSON, cacheSetJSON } from "../lib/cache.js";
 
@@ -126,7 +121,6 @@ export function videoRoutes() {
           duration,
         });
         await bumpNamespace(userId); // 🔹 Invalidate cache
-        notifyTranscodeWorker();
         return res.status(201).json({ video: buildVideoResponse(created) });
       } catch (err) {
         if (err?.name === "ConditionalCheckFailedException") {
@@ -277,10 +271,9 @@ export function videoRoutes() {
       }
 
       if (video.status === "processing") {
-        if (getCurrentTranscodeId() === videoId && cancelCurrentTranscode()) {
-          return res.json({ canceling: true, status: "processing" });
-        }
-        return res.status(409).json({ error: "Worker is not on this video right now" });
+        return res
+          .status(409)
+          .json({ error: "Cannot cancel while background worker runs on separate service" });
       }
 
       return res.status(400).json({ error: `Cannot cancel in status ${video.status}` });
@@ -299,7 +292,6 @@ export function videoRoutes() {
       if (!video) return res.status(404).json({ error: "Not found" });
 
       if (video.status === "processing") {
-        if (getCurrentTranscodeId() === videoId) cancelCurrentTranscode();
         await videoRepo.markFailed(video.userId, videoId, "deleted by admin");
       }
 
