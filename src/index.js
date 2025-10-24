@@ -2,10 +2,6 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
-import { authRoutes } from "./routes/auth.js";
-import { meRoutes } from "./routes/me.js";
-import { videoRoutes } from "./routes/videos.js";
-import { mediaRoutes } from "./routes/media.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectToMemcached } from "./lib/cache.js";
@@ -29,7 +25,10 @@ const bootstrap = async () => {
     "TAGS_TOP_K",
     "TAGS_MIN_SCORE",
     "QUT_USERNAME",
-    "TRANSCODE_LOCK_TTL_MS"
+    "TRANSCODE_LOCK_TTL_MS",
+    "SQS_QUEUE_URL",
+    "SQS_REGION",
+    "SQS_VISIBILITY_SECONDS"
   ]);
   console.log("✅ Parameters loaded from AWS SSM Parameter Store");
 
@@ -76,6 +75,10 @@ const bootstrap = async () => {
   });
 
   // API routes
+  const { authRoutes } = await import("./routes/auth.js");
+  const { meRoutes } = await import("./routes/me.js");
+  const { videoRoutes } = await import("./routes/videos.js");
+  const { mediaRoutes } = await import("./routes/media.js");
   app.use("/api/v1/auth", authRoutes());
   app.use("/api/v1", meRoutes());
   app.use("/api/v1", videoRoutes());

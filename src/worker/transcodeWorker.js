@@ -22,6 +22,7 @@ import {
 } from "../lib/ffmpeg.js";
 import { classifyImageAtPath } from "../lib/tagger.js";
 import { ensureParametersLoaded } from "../config/parameterStore.js";
+import { receiveBatch, deleteMessage, extendVisibility } from "../lib/sqs.js";
 
 await ensureParametersLoaded(["TRANSCODE_LOCK_TTL_MS"]);
 
@@ -147,32 +148,78 @@ async function reclaimStaleJobs() {
 }
 
 async function workCycle() {
-  if (running) {
-    scheduled = true;
-    return;
-  }
+  if (running) { scheduled = true; return; }
   running = true;
   try {
-    let processed;
-    do {
-      processed = false;
-      await reclaimStaleJobs();
-      const claimed = await videoRepo.claimNextQueuedVideo(WORKER_ID, 5);
-      if (claimed) {
-        processed = true;
-        await processVideo(claimed);
-      }
-    } while (processed);
+    const messages = await receiveBatch({ max: 5, wait: 20 });
+    if (!messages.length) return; // idle, next tick will poll again
+    for (const m of messages) {
+      await handleMessage(m); // sequential is OK for ffmpeg I/O
+    }
   } catch (err) {
     console.error("[worker] cycle error", err);
   } finally {
     running = false;
-    if (scheduled) {
-      scheduled = false;
-      queueMicrotask(workCycle);
-    }
+    if (scheduled) { scheduled = false; queueMicrotask(workCycle); }
   }
 }
+
+
+async function handleMessage(msg) {
+  let parsed;
+  try {
+    parsed = JSON.parse(msg.Body || "{}");
+  } catch {
+    // bad message: drop it
+    await deleteMessage(msg.ReceiptHandle);
+    return;
+  }
+
+  const { userId, videoId, originalKey } = parsed || {};
+  if (!userId || !videoId) {
+    await deleteMessage(msg.ReceiptHandle);
+    return;
+  }
+
+  console.log(`[worker] got message: user=${userId} video=${videoId} rh=${msg.ReceiptHandle.slice(0,12)}...`);
+
+  // Claim in DDB to ensure only one worker does the job
+  let claimed;
+  try {
+    claimed = await videoRepo.markProcessing(userId, videoId, WORKER_ID);
+  } catch (err) {
+    if (err?.name === "ConditionalCheckFailedException") {
+      await deleteMessage(msg.ReceiptHandle);
+      return;
+    }
+    // transient error → let message reappear
+    console.error("[worker] markProcessing error:", err?.message || err);
+    return;
+  }
+  if (!claimed) {
+    await deleteMessage(msg.ReceiptHandle);
+    return;
+  }
+
+  // Heartbeat: extend visibility while ffmpeg runs
+  const visSeconds = Number(process.env.SQS_VISIBILITY_SECONDS || 900);
+  const hbMs = Math.max(60_000, Math.floor((visSeconds * 1000) / 3));
+  let hbTimer = setInterval(() => {
+    extendVisibility(msg.ReceiptHandle, visSeconds).catch(() => {});
+  }, hbMs);
+
+  try {
+    await processVideo(claimed);
+    clearInterval(hbTimer);
+    console.log(`[worker] completed: user=${userId} video=${videoId} (deleting SQS message)`);
+    await deleteMessage(msg.ReceiptHandle);
+  } catch (err) {
+    clearInterval(hbTimer);
+    console.error("[worker] processing failed:", err?.message || err);
+    // DO NOT delete → SQS will redeliver / DLQ after maxReceiveCount
+  }
+}
+
 
 let pollTimer = null;
 

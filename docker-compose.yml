@@ -30,7 +30,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     image: cab432-worker:latest
-    container_name: cab432-worker
+    # container_name: cab432-worker
     env_file:
       - .env
     environment:

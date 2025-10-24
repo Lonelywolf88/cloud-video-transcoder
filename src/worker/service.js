@@ -6,7 +6,10 @@ const REQUIRED_PARAMETERS = [
   "QUT_USERNAME",
   "S3_BUCKET",
   "DDB_TABLE",
-  "TRANSCODE_LOCK_TTL_MS"
+  "TRANSCODE_LOCK_TTL_MS",
+  "SQS_QUEUE_URL",
+  "SQS_REGION",
+  "SQS_VISIBILITY_SECONDS"
 ];
 
 async function bootstrap() {

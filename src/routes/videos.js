@@ -15,6 +15,7 @@ import {
 } from "../lib/paths.js";
 import { createUploadUrl } from "../lib/s3Presign.js";
 import { bumpNamespace, buildVideosListKey, cacheGetJSON, cacheSetJSON } from "../lib/cache.js";
+import { enqueueTranscodeJob } from "../lib/sqs.js";
 
 function normalizeDuration(value) {
   if (value === undefined || value === null || value === "") return undefined;
@@ -120,8 +121,18 @@ export function videoRoutes() {
           originalKey,
           duration,
         });
-        await bumpNamespace(userId); // 🔹 Invalidate cache
+        await bumpNamespace(userId);
+
+        // 👇 enqueue an SQS job
+        try {
+          await enqueueTranscodeJob({ userId, videoId, originalKey });
+        } catch (e) {
+          console.error("[videos] failed to enqueue SQS message:", e);
+          // still 201 so the UI behaves; the worker queue can be retried manually
+        }
+
         return res.status(201).json({ video: buildVideoResponse(created) });
+
       } catch (err) {
         if (err?.name === "ConditionalCheckFailedException") {
           return res.status(409).json({ error: "Video already exists" });
