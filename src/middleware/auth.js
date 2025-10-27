@@ -15,6 +15,12 @@ function getVerifier() {
 }
 
 export async function authRequired(req, res, next) {
+  const userAgent = req.headers["user-agent"] || "";
+  if (userAgent.includes("ELB-HealthChecker")) {
+    // Allow AWS load balancer health checks without Cognito tokens
+    return res.status(200).json({ ok: true, source: "elb-health-check" });
+  }
+
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : req.query.token;
   if (!token) return res.status(401).json({ error: "Missing token" });
