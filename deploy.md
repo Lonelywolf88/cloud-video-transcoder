@@ -83,3 +83,47 @@ QUT_USERNAME: identifies the student for marking.
 
 TRANSCODE_LOCK_TTL_MS: timeout for distributed locking of video transcoding jobs.
 To launch the API microservice locally (without the worker), run `npm run api` or `docker compose up app`.
+
+## Autoscaling With Custom Metric
+
+The Lambda source for the custom scaling metric lives at `lambda/transcode-metrics/index.mjs`. It reads the queue depth from SQS, the running task count from ECS, and publishes `BacklogPerWorker` plus helper metrics to CloudWatch so the worker service scales on backlog instead of CPU.
+
+### Deploy the Lambda
+- Zip the file: `zip -j lambda.zip lambda/transcode-metrics/index.mjs`.
+- Create the function (Node.js 20) with an execution role that can read the SSM parameter `/cab432/g58/app/SQS_QUEUE_URL`, call `sqs:GetQueueAttributes`, `cloudwatch:PutMetricData`, and (optionally) `ecs:DescribeServices` if the role can inspect the ECS service.
+- Set environment variables:
+  - `AWS_REGION=ap-southeast-2`
+  - `PARAMETER_STORE_PREFIX=/cab432/g58/app/`
+  - `SQS_QUEUE_PARAM_KEY=SQS_QUEUE_URL`
+  - `WORKER_COUNT_BASELINE=1` (fallback when ECS permissions are not available)
+  - Optional: `ECS_CLUSTER_NAME=a3-g58-worker-microservice`, `ECS_SERVICE_NAME=a3-g58-worker-microservice`
+  - Optional: `CUSTOM_METRIC_NAMESPACE=Custom/g58/Transcode`
+
+### Schedule the Metric Publisher
+- Create an EventBridge rule (e.g. `rate(1 minute)`) that invokes the Lambda.
+- Verify the Lambda logs include the queue URL and backlog statistics.
+- In CloudWatch -> Metrics -> `Custom/g58/Transcode`, confirm the new metrics appear.
+
+### Update ECS Scaling Policies
+- In the ECS console, open service `a3-g58-worker-microservice`.
+- Attach a target-tracking policy on metric `BacklogPerWorker` with target value `2`. Use your existing `g58-SQS-QueueHigh`/`Low` alarms as fallbacks for step scaling if desired.
+- Set min/max task counts (e.g. min 1, max 10) and test by pushing messages onto the queue; watch the metric cross the target and trigger scale out/in.
+
+## Lambda: S3 Upload Dispatcher
+
+`lambda/s3-upload-dispatch/index.mjs` is a serverless entry point that reacts to new `original.mp4` uploads and enqueues the matching transcode job on SQS. This avoids wiring EventBridge schedules if your account lacks those permissions.
+
+### Deploy the Dispatcher
+- Zip it: `zip -j lambda-s3-dispatch.zip lambda/s3-upload-dispatch/index.mjs`.
+- Create a Lambda (Node.js 20) with an execution role that can read `/cab432/g58/app/SQS_QUEUE_URL` from SSM and call `sqs:SendMessage`.
+- Configure environment variables:
+  - `AWS_REGION=ap-southeast-2`
+  - `PARAMETER_STORE_PREFIX=/cab432/g58/app/`
+  - `SQS_QUEUE_PARAM_KEY=SQS_QUEUE_URL`
+  - Optional: `SQS_QUEUE_URL` (direct value if you prefer not to read Parameter Store)
+  - Optional: `EXPECTED_BUCKET_NAME=<your-private-video-bucket>` to filter events from the target bucket only
+
+### Wire the Trigger
+- In S3, add an event notification on the bucket (ObjectCreated, suffix `original.mp4`) targeting the Lambda.
+- Upload a test video using the standard key pattern `user/<userId>/videos/<videoId>/original.mp4`.
+- Verify the Lambda logs the dispatch and an SQS message appears in queue `a3-g58-workerqueue`; the worker service should pick up the job as usual.

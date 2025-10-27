@@ -1,6 +1,6 @@
 import { SSMClient, GetParametersCommand } from "@aws-sdk/client-ssm";
 
-const DEFAULT_PREFIX = "/cab432/g57/app/";
+const DEFAULT_PREFIX = "/cab432/g58/app/";
 const DEFAULT_REGION = "ap-southeast-2";
 
 const parameterMap = new Map();
