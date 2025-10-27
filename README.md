@@ -8,6 +8,38 @@ docker compose up --build --scale worker=3
 docker compose up --build --scale worker=1
 
 
+# for dlq testing
+# 1) Run app
+docker compose up --build
+# 2) Open new terminal
+docker compose stop worker
+# 3) Upload  video
+# 4) control F , search = "enqueued video", copy the <VIDEO_ID>
+# 5) go S3 Console and delete user/<USER_ID>/videos/<VIDEO_ID>/
+# 6) open a new terminal, run below
+docker compose logs -f worker
+docker compose start worker
+# (will see [sqs] batch received size=1 ... ... NoSuchKey: The specified key does not exist)
+
+
+# BELOW show in AWS page (when present)
+“Max receives is 3. The worker failed to fetch the file three times without deleting the message, so SQS moved it to the DLQ. Here are the DLQ messages and their bodies.”
+
+1) Show DLQ has messages
+Go: SQS → Queues → a3-g58-workerqueue-dlq
+On the Details tab, point to Messages available (e.g., “2”).
+
+2) Open and read a DLQ message
+Click Send and receive messages (top-right).
+Click Poll for messages (if nothing shows).
+Tick a message → click View details.
+In the right panel:
+Body: shows userId, videoId, originalKey.
+Attributes: shows ApproximateReceiveCount.
+
+
+
+
 
 A cloud-native video processing application built with Node.js, Express, and AWS services. Users can upload videos, which are automatically transcoded into multiple resolutions, thumbnailed, and auto-tagged using machine learning. The platform supports authentication, multi-user access, admin controls, and stateless horizontal scaling.Need to do "aws configure sso" to able to sign in to s3
 
