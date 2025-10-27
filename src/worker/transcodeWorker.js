@@ -4,10 +4,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import {
-  GetObjectCommand,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import {
   videoRepo,
   getS3Client,
@@ -44,9 +41,7 @@ async function downloadOriginal(video, destination) {
   const data = await getS3Client().send(
     new GetObjectCommand({ Bucket: bucket(), Key: video.originalKey })
   );
-  if (!data.Body) {
-    throw new Error("Original object missing");
-  }
+  if (!data.Body) throw new Error("Original object missing");
   await pipeline(data.Body, fs.createWriteStream(destination));
 }
 
@@ -79,9 +74,27 @@ async function processVideo(video) {
     const duration = await ffprobeDurationSeconds(originalPath);
 
     const profiles = [
-      { resolution: "1080", vf: "scale=-2:1080", crf: 22, ab: "128k", file: path.join(tmpDir, "1080.mp4") },
-      { resolution: "720", vf: "scale=-2:720", crf: 23, ab: "128k", file: path.join(tmpDir, "720.mp4") },
-      { resolution: "480", vf: "scale=-2:480", crf: 24, ab: "96k", file: path.join(tmpDir, "480.mp4") },
+      {
+        resolution: "1080",
+        vf: "scale=-2:1080",
+        crf: 22,
+        ab: "128k",
+        file: path.join(tmpDir, "1080.mp4"),
+      },
+      {
+        resolution: "720",
+        vf: "scale=-2:720",
+        crf: 23,
+        ab: "128k",
+        file: path.join(tmpDir, "720.mp4"),
+      },
+      {
+        resolution: "480",
+        vf: "scale=-2:480",
+        crf: 24,
+        ab: "96k",
+        file: path.join(tmpDir, "480.mp4"),
+      },
     ];
 
     await transcodeProfiles(
@@ -128,6 +141,8 @@ async function processVideo(video) {
         : err?.message || "Transcode failed";
     console.error("[worker] transcode failed", userId, videoId, err);
     await videoRepo.markFailed(userId, videoId, message).catch(() => {});
+    // Re-throw so the SQS message is NOT deleted by the caller.
+    throw err;
   } finally {
     current = null;
     if (tmpDir) {
@@ -141,14 +156,15 @@ async function reclaimStaleJobs() {
   const stale = await videoRepo.findStaleProcessing(cutoffIso, 10);
   for (const job of stale) {
     const reset = await videoRepo.requeueVideo(job.userId, job.videoId);
-    if (reset) {
-      console.warn(`[worker] Re-queued stale job ${job.videoId}`);
-    }
+    if (reset) console.warn(`[worker] Re-queued stale job ${job.videoId}`);
   }
 }
 
 async function workCycle() {
-  if (running) { scheduled = true; return; }
+  if (running) {
+    scheduled = true;
+    return;
+  }
   running = true;
   try {
     const messages = await receiveBatch({ max: 5, wait: 20 });
@@ -160,10 +176,12 @@ async function workCycle() {
     console.error("[worker] cycle error", err);
   } finally {
     running = false;
-    if (scheduled) { scheduled = false; queueMicrotask(workCycle); }
+    if (scheduled) {
+      scheduled = false;
+      queueMicrotask(workCycle);
+    }
   }
 }
-
 
 async function handleMessage(msg) {
   let parsed;
@@ -175,13 +193,18 @@ async function handleMessage(msg) {
     return;
   }
 
-  const { userId, videoId, originalKey } = parsed || {};
+  const { userId, videoId } = parsed || {};
   if (!userId || !videoId) {
     await deleteMessage(msg.ReceiptHandle);
     return;
   }
 
-  console.log(`[worker] got message: user=${userId} video=${videoId} rh=${msg.ReceiptHandle.slice(0,12)}...`);
+  console.log(
+    `[worker] got message: user=${userId} video=${videoId} rh=${msg.ReceiptHandle.slice(
+      0,
+      12
+    )}...`
+  );
 
   // Claim in DDB to ensure only one worker does the job
   let claimed;
@@ -211,7 +234,9 @@ async function handleMessage(msg) {
   try {
     await processVideo(claimed);
     clearInterval(hbTimer);
-    console.log(`[worker] completed: user=${userId} video=${videoId} (deleting SQS message)`);
+    console.log(
+      `[worker] completed: user=${userId} video=${videoId} (deleting SQS message)`
+    );
     await deleteMessage(msg.ReceiptHandle);
   } catch (err) {
     clearInterval(hbTimer);
@@ -220,13 +245,10 @@ async function handleMessage(msg) {
   }
 }
 
-
 let pollTimer = null;
 
 function schedulePolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-  }
+  if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
     workCycle();
   }, POLL_INTERVAL_MS);
