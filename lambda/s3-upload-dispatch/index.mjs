@@ -9,7 +9,7 @@ import {
 
 const REGION = process.env.AWS_REGION || "ap-southeast-2";
 const PARAMETER_PREFIX =
-  process.env.PARAMETER_STORE_PREFIX || "/cab432/g58/app/";
+  process.env.PARAMETER_STORE_PREFIX || "/cab432/g57/app/";
 const QUEUE_PARAM_KEY = process.env.SQS_QUEUE_PARAM_KEY || "SQS_QUEUE_URL";
 const EXPECTED_BUCKET = process.env.EXPECTED_BUCKET_NAME;
 

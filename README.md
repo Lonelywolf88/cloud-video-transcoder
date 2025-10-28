@@ -1,12 +1,12 @@
 # CAB432 Video Transcoding PlatformTo test run in local(fastest way), run:
-
+docker compose down
 docker compose up --build
 
 docker compose up app
 docker compose up worker
-docker compose up --build --scale worker=3
-docker compose up --build --scale worker=1
 
+docker compose up --build dlq
+docker compose logs -f dlq
 
 # for dlq testing
 # 1) Run app

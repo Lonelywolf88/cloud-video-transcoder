@@ -30,7 +30,6 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     image: cab432-worker:latest
-    # container_name: cab432-worker
     env_file:
       - .env
     environment:
@@ -40,6 +39,28 @@ services:
       - ${USERPROFILE}/.aws:/root/.aws:ro
     depends_on:
       - memcached
+    restart: unless-stopped
+
+  # NEW: DLQ reprocessor microservice
+  dlq:
+    build:
+      context: .
+      dockerfile: Dockerfile.dlq
+    image: cab432-dlq:latest
+    env_file:
+      - .env
+    environment:
+      - AWS_PROFILE=CAB432-STUDENT-901444280953
+      - AWS_REGION=ap-southeast-2
+      # 🔁 replace these with your actual SQS URLs
+      - DLQ_URL=https://sqs.ap-southeast-2.amazonaws.com/901444280953/a3-g58-workerqueue-dlq
+      - MAIN_QUEUE_URL=https://sqs.ap-southeast-2.amazonaws.com/901444280953/a3-g58-workerqueue
+      # optional tuning
+      - WAIT_SECONDS=20
+      - MAX_BATCH=5
+      - VIS_SECONDS=300
+    volumes:
+      - ${USERPROFILE}/.aws:/root/.aws:ro
     restart: unless-stopped
 
   memcached:

@@ -1,0 +1,13 @@
+# Dockerfile.dlq
+FROM node:20-bookworm-slim
+WORKDIR /app
+
+# Reuse your project deps (must include @aws-sdk/client-sqs)
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Only the source
+COPY src ./src
+
+# Start the DLQ service
+CMD ["node", "src/dlq-reprocessor/index.js"]
