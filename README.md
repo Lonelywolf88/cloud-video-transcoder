@@ -531,6 +531,8 @@ ISC (see `package.json`)
 ## 👥 Contributors
 
 - **Group 57**: QUT CAB432 Assessment 2 (2025)
+- Sin Boon Leon
+- Teoh Yi Teng
 
 ## 🔗 Related Documentation
 
