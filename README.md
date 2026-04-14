@@ -1,4 +1,4 @@
-## Introduction
+## INTRODUCTION
 
 This project is a cloud-native video processing application built with Node.js, Express, and AWS services. Users can upload videos that are automatically transcoded into multiple resolutions, generate thumbnails, and are enriched with machine learning–based auto-tagging. The platform supports authentication, multi-user access, admin controls, and stateless horizontal scaling for scalable and reliable performance.
 
